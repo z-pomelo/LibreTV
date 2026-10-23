@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "next dev -p 8080",
     "build": "next build",
+    "package": "DOCKER_BUILD=1 next build && cp -r public .next/standalone/ && cp -r .next/static .next/standalone/.next/ && tar -czf LibreTV-standalone.tar.gz -C .next/standalone .",
     "start": "next start -p 8080",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
