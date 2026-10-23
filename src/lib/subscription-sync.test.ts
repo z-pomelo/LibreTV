@@ -161,6 +161,13 @@ describe('applyEnvPresets · DEFAULT_RECOMMEND_SOURCE（issue #918）', () => {
     expect(useAppStore.getState().recommendSource).toBe('hot-list');
   });
 
+  it('存量用户：老版本出厂默认 douban 且未主动选择过的用户，应用部署者默认值', async () => {
+    useAppStore.setState({ recommendSource: 'douban', recommendSourceTouched: false });
+    await applyEnvPresets(status({ defaultRecommendSource: 'vod' }));
+    expect(useAppStore.getState().recommendSource).toBe('vod');
+    expect(useAppStore.getState().recommendSourceTouched).toBe(false);
+  });
+
   it('存量用户：从未打过标记但偏好已不是出厂默认值的（老版本手动改过）不被覆盖', async () => {
     useAppStore.setState({ recommendSource: 'bangumi', recommendSourceTouched: false });
     await applyEnvPresets(status({ defaultRecommendSource: 'douban' }));

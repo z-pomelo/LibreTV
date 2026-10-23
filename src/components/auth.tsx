@@ -59,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSetupRequired(!s.passwordRequired);
         setVersion(s.version);
         setChecked(true);
+        if (s) void applyEnvPresets(s);
       })
       .catch(() => {
         if (!cancelled) setChecked(true);

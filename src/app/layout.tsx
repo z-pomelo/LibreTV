@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { Providers } from '@/components/providers';
+import { getEnvRecommendSource } from '@/lib/env-recommend-source';
 
 export const metadata: Metadata = {
   title: {
@@ -30,6 +31,7 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const envRecommendSource = getEnvRecommendSource();
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <head>
@@ -40,6 +42,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               "(function(){try{var t=localStorage.getItem('libretv-theme')||'dark';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d);}catch(e){}})()",
           }}
         />
+        {envRecommendSource && (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `window.__DEFAULT_RECOMMEND_SOURCE__=${JSON.stringify(envRecommendSource)};`,
+            }}
+          />
+        )}
       </head>
       <body>
         <Providers>{children}</Providers>

@@ -295,6 +295,22 @@ function nextCustomKey(apiList: SourceConfig[]): string {
   return `custom_${i}`;
 }
 
+/** 获取初始推荐数据源：SSR 时读环境变量，首屏客户端读 head 注入的全局配置，避免水合不一致与首屏闪烁 */
+function getInitialRecommendSource(): 'douban' | 'bangumi' | 'hot-list' | 'vod' {
+  if (typeof window !== 'undefined') {
+    const injected = (
+      window as unknown as { __DEFAULT_RECOMMEND_SOURCE__?: 'douban' | 'bangumi' | 'hot-list' | 'vod' }
+    ).__DEFAULT_RECOMMEND_SOURCE__;
+    if (injected) return injected;
+  } else if (typeof process !== 'undefined' && process.env?.DEFAULT_RECOMMEND_SOURCE) {
+    const raw = process.env.DEFAULT_RECOMMEND_SOURCE.trim().toLowerCase();
+    if (raw === 'douban' || raw === 'bangumi' || raw === 'hot-list' || raw === 'vod') {
+      return raw;
+    }
+  }
+  return 'hot-list';
+}
+
 /**
  * 节流写入的 localStorage 包装已抽至 persist-storage.ts（db.ts 的 importConfig
  * 需要在直接写盘前 flush 缓冲，而运行时依赖方向是 store → db，不能反向引用）。
@@ -321,7 +337,7 @@ export const useAppStore = create<AppState>()(
       yellowFilter: true,
       adFilter: true,
       doubanEnabled: true,
-      recommendSource: 'hot-list',
+      recommendSource: getInitialRecommendSource(),
       recommendSourceTouched: false,
       selectedRecommendVodKey: undefined,
       setSelectedRecommendVodKey: (key) => set({ selectedRecommendVodKey: key }),
