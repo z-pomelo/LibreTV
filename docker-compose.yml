@@ -2,14 +2,15 @@ services:
   libretv:
     build: .
     # 版本管理：镜像 tag 与 package.json 的 version 保持一致
-    # - 使用者：不设置 LIBRETV_IMAGE 即拉取 ghcr.io/librespark/libretv:latest（首次部署用 docker compose pull）
-    # - 开发者：docker compose up -d --build 会在本地构建并打上同名 tag
-    # - 需要固定版本时设置 LIBRETV_IMAGE=ghcr.io/librespark/libretv:2.0.1
-    image: ${LIBRETV_IMAGE:-ghcr.io/librespark/libretv:latest}
+    # - 本地定制构建：默认打上 libretv:custom 标签；如需拉取远端或指定版本可通过 LIBRETV_IMAGE 覆盖
+    image: ${LIBRETV_IMAGE:-libretv:custom}
     container_name: libretv
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "9000:8080"
+    # 自动加载同目录下的 .env 文件中的全部配置（PASSWORD、DEFAULT_SOURCES、DEFAULT_RECOMMEND_SOURCE 等）
+    env_file:
+      - .env
     # 无状态服务：观看历史在浏览器 IndexedDB、设置在 localStorage，无需挂载卷
     environment:
       # 必填：访问密码（在 .env 中设置，缺失时 compose 启动即报错提醒）
