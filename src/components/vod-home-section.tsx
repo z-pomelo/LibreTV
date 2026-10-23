@@ -184,11 +184,10 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     );
   }
 
-  // 下拉选项
+  // 下拉选项（仅展示源名称，不展示 URL）
   const sourceOptions: DropdownOption[] = activeSources.map((s) => ({
     value: s.key,
     label: s.name || s.key,
-    hint: s.url,
   }));
 
   return (
