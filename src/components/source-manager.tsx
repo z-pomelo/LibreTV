@@ -729,6 +729,37 @@ function CustomProxyInput() {
 
 function HomePanel() {
   const store = useAppStore();
+
+  const allAvailableSources = useMemo(() => {
+    const map = new Map<string, SourceConfig>();
+    for (const s of store.envSources) map.set(s.key, s);
+    for (const s of store.customAPIs) map.set(s.key, s);
+    let list = Array.from(map.values());
+    if (store.yellowFilter) {
+      list = list.filter((s) => !s.isAdult);
+    }
+    return list;
+  }, [store.envSources, store.customAPIs, store.yellowFilter]);
+
+  const activeSources = useMemo(() => {
+    const selected = allAvailableSources.filter((s) => store.selectedKeys.includes(s.key));
+    return selected.length > 0 ? selected : allAvailableSources;
+  }, [allAvailableSources, store.selectedKeys]);
+
+  const activeVodKey = useMemo(() => {
+    if (store.selectedRecommendVodKey && activeSources.some((s) => s.key === store.selectedRecommendVodKey)) {
+      return store.selectedRecommendVodKey;
+    }
+    return activeSources[0]?.key || '';
+  }, [store.selectedRecommendVodKey, activeSources]);
+
+  const vodSourceOptions = useMemo(() => {
+    return activeSources.map((s) => ({
+      value: s.key,
+      label: s.name || s.key,
+    }));
+  }, [activeSources]);
+
   return (
     <section>
       <SectionTitle title="首页与内容过滤" />
@@ -756,6 +787,19 @@ function HomePanel() {
             { value: 'vod', label: '点播源首页', hint: '自选采集站最新入库资源' },
           ]}
         />
+        {store.recommendSource === 'vod' && (
+          <SelectRow
+            label="推荐点播源"
+            description="首页展示该源的最新入库资源与分类"
+            value={activeVodKey}
+            onChange={(v) => store.setSelectedRecommendVodKey(v)}
+            options={
+              vodSourceOptions.length > 0
+                ? vodSourceOptions
+                : [{ value: '', label: '暂无可用点播源' }]
+            }
+          />
+        )}
       </div>
     </section>
   );

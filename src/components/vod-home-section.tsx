@@ -6,7 +6,6 @@ import { api } from '@/lib/client-api';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import type { SourceConfig, VodHomeResponse } from '@/lib/types';
-import { Dropdown, type DropdownOption } from './dropdown';
 import { SmartImage } from './smart-image';
 import { EmptyState, ErrorState, Spinner } from './states';
 import { isAdultContent } from '@/lib/cms-parser';
@@ -40,7 +39,6 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
   const selectedKeys = useAppStore((s) => s.selectedKeys);
   const yellowFilter = useAppStore((s) => s.yellowFilter);
   const selectedRecommendVodKey = useAppStore((s) => s.selectedRecommendVodKey);
-  const setSelectedRecommendVodKey = useAppStore((s) => s.setSelectedRecommendVodKey);
 
   // 1. 获取所有可用点播源（过滤成人内容）
   const allAvailableSources = useMemo(() => {
@@ -60,7 +58,7 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     return selected.length > 0 ? selected : allAvailableSources;
   }, [allAvailableSources, selectedKeys]);
 
-  // 2. 当前选中的源
+  // 2. 当前激活的点播源（由设置中的 selectedRecommendVodKey 决定）
   const activeSource = useMemo(() => {
     if (activeSources.length === 0) return undefined;
     if (selectedRecommendVodKey) {
@@ -87,17 +85,6 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     setClasses([]);
   }, [activeSourceKey]);
 
-  // 源切换时重置分类、页码与列表
-  const handleSelectSource = (newKey: string) => {
-    if (newKey === activeSource?.key) return;
-    setSelectedRecommendVodKey(newKey);
-    setSelectedParentId(undefined);
-    setSelectedSubId(undefined);
-    setPage(1);
-    setAccumulatedItems([]);
-    setClasses([]);
-  };
-
   // 4. 解析分类层级（一级大类与二级细分子类）
   const { rootClasses, childMap } = useMemo(() => {
     const classIdSet = new Set(classes.map((c) => c.id));
@@ -108,7 +95,6 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
 
     if (validChildren.length === 0) {
       return {
-        hasHierarchy: false,
         rootClasses: classes,
         childMap: new Map<string, NormalizedVodClass[]>(),
       };
@@ -127,7 +113,6 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     const roots = classes.filter((c) => !childIdSet.has(c.id));
 
     return {
-      hasHierarchy: true,
       rootClasses: roots,
       childMap,
     };
@@ -139,37 +124,39 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     return childMap.get(selectedParentId) ?? [];
   }, [selectedParentId, childMap]);
 
-  // 当前选中的一级分类名称
-  const currentParentName = useMemo(() => {
-    if (!selectedParentId) return '';
-    return rootClasses.find((c) => c.id === selectedParentId)?.name ?? '';
-  }, [selectedParentId, rootClasses]);
-
-  // 5. 计算发送给 API 的有效 typeId
+  // 5. 方案一：计算发送给 API 的有效 typeId
   const effectiveTypeId = useMemo(() => {
     if (!selectedParentId) return undefined;
-    // 选定了具体二级子类时，精准传子类 ID
+    // 有选中具体二级子类，传子类 ID
     if (selectedSubId) return selectedSubId;
-    // 选了一级大类时，若该大类有子分类，合并大类与全部子类 ID 进行联合查询（避免单传大类 0 条结果）
-    const subList = childMap.get(selectedParentId);
-    if (subList && subList.length > 0) {
-      return [selectedParentId, ...subList.map((s) => s.id)].join(',');
-    }
-    // 无子分类的独立分类（或扁平源），直接传本身 ID
+    // 无二级子类的独立分类，直接传本身 ID
     return selectedParentId;
-  }, [selectedParentId, selectedSubId, childMap]);
+  }, [selectedParentId, selectedSubId]);
 
-  // 切换一级分类
+  // 切换一级分类（方案一：自动选中并高亮该大类的第一个细分子类）
   const handleSelectParent = (newParentId?: string) => {
     if (newParentId === selectedParentId) return;
-    setSelectedParentId(newParentId);
-    setSelectedSubId(undefined);
+
+    if (!newParentId) {
+      // 选中顶层「全部」
+      setSelectedParentId(undefined);
+      setSelectedSubId(undefined);
+    } else {
+      setSelectedParentId(newParentId);
+      const subList = childMap.get(newParentId);
+      if (subList && subList.length > 0) {
+        // 自动激活该大类的第一个有效子分类（例如动作片、国产剧）
+        setSelectedSubId(subList[0].id);
+      } else {
+        setSelectedSubId(undefined);
+      }
+    }
     setPage(1);
     setAccumulatedItems([]);
   };
 
   // 切换二级分类
-  const handleSelectSub = (newSubId?: string) => {
+  const handleSelectSub = (newSubId: string) => {
     if (newSubId === selectedSubId) return;
     setSelectedSubId(newSubId);
     setPage(1);
@@ -259,42 +246,30 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     );
   }
 
-  // 下拉选项（仅展示源名称，不展示 URL）
-  const sourceOptions: DropdownOption[] = activeSources.map((s) => ({
-    value: s.key,
-    label: s.name || s.key,
-  }));
-
   return (
     <section aria-label="点播源首页推荐">
-      {/* 顶部工具条 */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted font-medium shrink-0">点播源：</span>
-          <Dropdown
-            value={activeSource.key}
-            onChange={handleSelectSource}
-            options={sourceOptions}
-            ariaLabel="切换点播源"
-            className="w-48 sm:w-56"
-          />
+      {/* 顶部源信息标识 */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-1.5 text-xs text-muted font-medium">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent" />
+          <span>{activeSource.name || activeSource.key}</span>
         </div>
       </div>
 
-      {/* 一级分类 Chips */}
+      {/* 一级分类 Pills */}
       {rootClasses.length > 0 && (
         <div
           className={cn(
             'flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none',
-            currentSubClasses.length > 0 ? 'mb-2' : 'mb-4'
+            currentSubClasses.length > 0 ? 'mb-2.5' : 'mb-4'
           )}
         >
           <button
             type="button"
             className={cn(
-              'px-2.5 py-1 rounded-full text-xs font-medium transition-colors shrink-0',
+              'px-3.5 py-1.5 rounded-full text-xs font-medium transition-all shrink-0',
               selectedParentId === undefined
-                ? 'bg-accent text-on-accent'
+                ? 'bg-accent text-on-accent shadow-xs'
                 : 'bg-chip text-muted hover:text-content hover:bg-hover'
             )}
             onClick={() => handleSelectParent(undefined)}
@@ -309,9 +284,9 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
                 key={c.id}
                 type="button"
                 className={cn(
-                  'px-2.5 py-1 rounded-full text-xs font-medium transition-colors shrink-0',
+                  'px-3.5 py-1.5 rounded-full text-xs font-medium transition-all shrink-0',
                   isSelected
-                    ? 'bg-accent text-on-accent'
+                    ? 'bg-accent text-on-accent shadow-xs'
                     : 'bg-chip text-muted hover:text-content hover:bg-hover'
                 )}
                 onClick={() => handleSelectParent(c.id)}
@@ -324,22 +299,9 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
         </div>
       )}
 
-      {/* 二级细分子类 Chips（仅在当前一级分类有子类时展开） */}
+      {/* 二级细分子类 Chips（优雅次级导航胶囊） */}
       {currentSubClasses.length > 0 && (
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 mb-4 scrollbar-none pl-1">
-          <button
-            type="button"
-            className={cn(
-              'px-2 py-0.5 rounded-full text-[11px] transition-colors shrink-0',
-              selectedSubId === undefined
-                ? 'bg-accent/15 text-accent font-medium border border-accent/30'
-                : 'bg-chip/60 text-muted hover:text-content hover:bg-hover'
-            )}
-            onClick={() => handleSelectSub(undefined)}
-            aria-pressed={selectedSubId === undefined}
-          >
-            全部{currentParentName}
-          </button>
+        <div className="flex items-center gap-1 overflow-x-auto pb-1 mb-4 scrollbar-none p-1 bg-chip/40 rounded-xl border border-line/30">
           {currentSubClasses.map((sub) => {
             const isSelected = selectedSubId === sub.id;
             return (
@@ -347,10 +309,10 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
                 key={sub.id}
                 type="button"
                 className={cn(
-                  'px-2 py-0.5 rounded-full text-[11px] transition-colors shrink-0',
+                  'px-3 py-1 rounded-lg text-xs transition-all shrink-0',
                   isSelected
-                    ? 'bg-accent/15 text-accent font-medium border border-accent/30'
-                    : 'bg-chip/60 text-muted hover:text-content hover:bg-hover'
+                    ? 'bg-accent text-on-accent font-medium shadow-xs'
+                    : 'text-muted hover:text-content hover:bg-hover/60'
                 )}
                 onClick={() => handleSelectSub(sub.id)}
                 aria-pressed={isSelected}
