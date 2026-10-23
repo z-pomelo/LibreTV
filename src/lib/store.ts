@@ -19,8 +19,10 @@ export interface AppSettings {
   yellowFilter: boolean;
   adFilter: boolean;
   doubanEnabled: boolean;
-  /** 首页推荐数据源：豆瓣热门 / Bangumi 每日放送（免 key）/ 影视热榜（60s API） */
-  recommendSource: 'douban' | 'bangumi' | 'hot-list';
+  /** 首页推荐数据源：豆瓣热门 / Bangumi 每日放送（免 key）/ 影视热榜（60s API）/ 点播源首页 */
+  recommendSource: 'douban' | 'bangumi' | 'hot-list' | 'vod';
+  /** 记录用户在首页推荐中选中的点播源 key */
+  selectedRecommendVodKey?: string;
   /** 用户是否在设置中主动选择过推荐数据源；为 false 时部署者的 DEFAULT_RECOMMEND_SOURCE 默认值可生效 */
   recommendSourceTouched: boolean;
   autoplayNext: boolean;
@@ -277,6 +279,7 @@ interface AppState extends AppSettings {
   /** 清除全部跳过片段（设置面板的「清除全部」入口） */
   clearAllSkipMarks: () => void;
   markEnvSubsSeen: (urls: string[]) => void;
+  setSelectedRecommendVodKey: (key: string) => void;
   updateSettings: (patch: Partial<Omit<AppSettings, 'customAPIs' | 'selectedKeys'>>) => void;
 }
 
@@ -320,6 +323,8 @@ export const useAppStore = create<AppState>()(
       doubanEnabled: true,
       recommendSource: 'hot-list',
       recommendSourceTouched: false,
+      selectedRecommendVodKey: undefined,
+      setSelectedRecommendVodKey: (key) => set({ selectedRecommendVodKey: key }),
       autoplayNext: true,
       skipMarks: {},
       // 自动跳过默认开启，但只有用户真正标记过片段才生效
@@ -897,6 +902,7 @@ export const useAppStore = create<AppState>()(
         doubanEnabled: s.doubanEnabled,
         recommendSource: s.recommendSource,
         recommendSourceTouched: s.recommendSourceTouched,
+        selectedRecommendVodKey: s.selectedRecommendVodKey,
         autoplayNext: s.autoplayNext,
         skipMarks: s.skipMarks,
         autoSkipSegments: s.autoSkipSegments,

@@ -7,6 +7,7 @@ import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import type { DoubanItem } from '@/lib/types';
 import { DoubanCard } from './video-card';
+import { VodHomeView } from './vod-home-section';
 
 const MOVIE_TAGS = ['热门', '最新', '经典', '豆瓣高分', '冷门佳片', '华语', '欧美', '韩国', '日本', '动画'];
 const TV_TAGS = ['热门', '美剧', '英剧', '韩剧', '日剧', '国产剧', '港剧', '日本动画', '综艺', '纪录片'];
@@ -18,6 +19,7 @@ export function RecommendSection({ onPick }: { onPick: (title: string) => void }
   const recommendSource = useAppStore((s) => s.recommendSource);
 
   if (!doubanEnabled) return null;
+  if (recommendSource === 'vod') return <VodHomeView onPick={onPick} />;
   if (recommendSource === 'bangumi') return <BangumiView onPick={onPick} />;
   if (recommendSource === 'hot-list') return <HotListView onPick={onPick} />;
   return <DoubanView onPick={onPick} />;

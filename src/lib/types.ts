@@ -1,3 +1,5 @@
+import type { RecommendSourceValue } from './env-recommend-source';
+
 // 采集站（Apple CMS 资源站）描述
 export interface SourceConfig {
   /** 唯一标识，如 "custom_0"；内置源直接用短名 */
@@ -124,6 +126,21 @@ export interface BangumiCalendarResponse {
   days: BangumiCalendarDay[];
 }
 
+/** 点播源分类条目 */
+export interface VodClassItem {
+  id: number | string;
+  name: string;
+}
+
+/** 点播源首页推荐响应数据契约 */
+export interface VodHomeResponse {
+  items: SearchResultItem[];
+  classes: VodClassItem[];
+  page: number;
+  pageCount: number;
+  total: number;
+}
+
 export interface AuthStatusResponse {
   /** 服务器是否配置了 PASSWORD */
   passwordRequired: boolean;
@@ -137,7 +154,7 @@ export interface AuthStatusResponse {
   /** 部署者通过 DEFAULT_SUBSCRIPTIONS 环境变量预置的 SourceList 订阅链接（未配置时为空数组） */
   defaultSubscriptions: { url: string; name?: string }[];
   /** 部署者通过 DEFAULT_RECOMMEND_SOURCE 环境变量指定的首页推荐数据源默认值（未配置时为 null） */
-  defaultRecommendSource: 'douban' | 'bangumi' | 'hot-list' | null;
+  defaultRecommendSource: RecommendSourceValue | null;
   /** 部署者通过 DEFAULT_IMAGE_MODE 环境变量指定的封面图加载方式默认值（未配置时为 null） */
   defaultImageMode: 'direct' | 'proxy' | null;
 }

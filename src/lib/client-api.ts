@@ -1,6 +1,6 @@
 'use client';
 
-import type { SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload, QualityProbeItem, QualityProbeResult } from './types';
+import type { SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload, QualityProbeItem, QualityProbeResult, VodHomeResponse } from './types';
 
 /**
  * 客户端 API 封装。401 时触发全局事件打开登录框，
@@ -208,6 +208,20 @@ export const api = {
   hotList: (id: string, signal?: AbortSignal) => {
     const sp = new URLSearchParams({ id });
     return request<DoubanResponse>(`/api/hot-list?${sp.toString()}`, { signal });
+  },
+
+  /** 点播源首页推荐（支持按分类与分页查询） */
+  sourceHome: (
+    source: SourceConfig,
+    options?: { typeId?: string | number; page?: number },
+    signal?: AbortSignal
+  ) => {
+    const sp = new URLSearchParams({
+      source: JSON.stringify(source),
+      ...(options?.typeId !== undefined ? { typeId: String(options.typeId) } : {}),
+      ...(options?.page ? { page: String(options.page) } : {}),
+    });
+    return request<VodHomeResponse>(`/api/source/home?${sp.toString()}`, { signal });
   },
 
   /** 换源：按标题跨源搜索并取详情，附带接口耗时（测速）；支持 signal 以便关闭弹窗时中止在途请求 */
