@@ -91,8 +91,8 @@ describe('GET /api/source/home', () => {
       pagecount: 5,
       total: 100,
       class: [
-        { type_id: 1, type_name: '电影' },
-        { type_id: 2, type_name: '连续剧' },
+        { type_id: 1, type_pid: 0, type_name: '电影' },
+        { type_id: 2, type_pid: 1, type_name: '动作片' },
       ],
       list: [
         {
@@ -124,8 +124,8 @@ describe('GET /api/source/home', () => {
     expect(data.pageCount).toBe(5);
     expect(data.total).toBe(100);
     expect(data.classes).toEqual([
-      { id: 1, name: '电影' },
-      { id: 2, name: '连续剧' },
+      { id: 1, name: '电影', pid: 0 },
+      { id: 2, name: '动作片', pid: 1 },
     ]);
     expect(data.items).toHaveLength(1);
     expect(data.items[0]).toMatchObject({

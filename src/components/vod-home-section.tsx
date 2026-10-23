@@ -21,6 +21,7 @@ interface NormalizedVodItem {
 interface NormalizedVodClass {
   id: string;
   name: string;
+  pid?: string;
 }
 
 /** 统一调用点播源首页数据，优先使用 api.sourceHome */
@@ -69,8 +70,9 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     return activeSources[0];
   }, [activeSources, selectedRecommendVodKey]);
 
-  // 3. 内部状态：分类与页码
-  const [typeId, setTypeId] = useState<string | number | undefined>(undefined);
+  // 3. 内部状态：一级分类、二级子分类、页码与条目
+  const [selectedParentId, setSelectedParentId] = useState<string | undefined>(undefined);
+  const [selectedSubId, setSelectedSubId] = useState<string | undefined>(undefined);
   const [page, setPage] = useState<number>(1);
   const [accumulatedItems, setAccumulatedItems] = useState<NormalizedVodItem[]>([]);
   const [classes, setClasses] = useState<NormalizedVodClass[]>([]);
@@ -78,7 +80,8 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
   // 外部或内部导致当前激活源变更时同步重置
   const activeSourceKey = activeSource?.key;
   useEffect(() => {
-    setTypeId(undefined);
+    setSelectedParentId(undefined);
+    setSelectedSubId(undefined);
     setPage(1);
     setAccumulatedItems([]);
     setClasses([]);
@@ -88,26 +91,97 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
   const handleSelectSource = (newKey: string) => {
     if (newKey === activeSource?.key) return;
     setSelectedRecommendVodKey(newKey);
-    setTypeId(undefined);
+    setSelectedParentId(undefined);
+    setSelectedSubId(undefined);
     setPage(1);
     setAccumulatedItems([]);
     setClasses([]);
   };
 
-  // 分类切换时重置页码为 1
-  const handleSelectType = (newTypeId: string | number | undefined) => {
-    if (newTypeId === typeId) return;
-    setTypeId(newTypeId);
+  // 4. 解析分类层级（一级大类与二级细分子类）
+  const { rootClasses, childMap } = useMemo(() => {
+    const classIdSet = new Set(classes.map((c) => c.id));
+    // 找出所有有效子分类（其 pid 对应 classes 中存在的一级父类）
+    const validChildren = classes.filter(
+      (c) => c.pid && c.pid !== '0' && c.pid !== c.id && classIdSet.has(c.pid)
+    );
+
+    if (validChildren.length === 0) {
+      return {
+        hasHierarchy: false,
+        rootClasses: classes,
+        childMap: new Map<string, NormalizedVodClass[]>(),
+      };
+    }
+
+    const childMap = new Map<string, NormalizedVodClass[]>();
+    for (const child of validChildren) {
+      const p = child.pid!;
+      const list = childMap.get(p) ?? [];
+      list.push(child);
+      childMap.set(p, list);
+    }
+
+    // 一级大类：本身不是子分类的所有分类
+    const childIdSet = new Set(validChildren.map((c) => c.id));
+    const roots = classes.filter((c) => !childIdSet.has(c.id));
+
+    return {
+      hasHierarchy: true,
+      rootClasses: roots,
+      childMap,
+    };
+  }, [classes]);
+
+  // 当前选中一级分类下的二级子类列表
+  const currentSubClasses = useMemo(() => {
+    if (!selectedParentId) return [];
+    return childMap.get(selectedParentId) ?? [];
+  }, [selectedParentId, childMap]);
+
+  // 当前选中的一级分类名称
+  const currentParentName = useMemo(() => {
+    if (!selectedParentId) return '';
+    return rootClasses.find((c) => c.id === selectedParentId)?.name ?? '';
+  }, [selectedParentId, rootClasses]);
+
+  // 5. 计算发送给 API 的有效 typeId
+  const effectiveTypeId = useMemo(() => {
+    if (!selectedParentId) return undefined;
+    // 选定了具体二级子类时，精准传子类 ID
+    if (selectedSubId) return selectedSubId;
+    // 选了一级大类时，若该大类有子分类，合并大类与全部子类 ID 进行联合查询（避免单传大类 0 条结果）
+    const subList = childMap.get(selectedParentId);
+    if (subList && subList.length > 0) {
+      return [selectedParentId, ...subList.map((s) => s.id)].join(',');
+    }
+    // 无子分类的独立分类（或扁平源），直接传本身 ID
+    return selectedParentId;
+  }, [selectedParentId, selectedSubId, childMap]);
+
+  // 切换一级分类
+  const handleSelectParent = (newParentId?: string) => {
+    if (newParentId === selectedParentId) return;
+    setSelectedParentId(newParentId);
+    setSelectedSubId(undefined);
     setPage(1);
     setAccumulatedItems([]);
   };
 
-  // 4. 数据拉取
+  // 切换二级分类
+  const handleSelectSub = (newSubId?: string) => {
+    if (newSubId === selectedSubId) return;
+    setSelectedSubId(newSubId);
+    setPage(1);
+    setAccumulatedItems([]);
+  };
+
+  // 6. 数据拉取
   const query = useQuery({
-    queryKey: ['vod-home', activeSource?.key, typeId ?? 'all', page],
+    queryKey: ['vod-home', activeSource?.key, effectiveTypeId ?? 'all', page],
     queryFn: ({ signal }) => {
       if (!activeSource) return Promise.reject(new Error('未找到可用点播源'));
-      return fetchSourceHome(activeSource, { typeId, page }, signal);
+      return fetchSourceHome(activeSource, { typeId: effectiveTypeId, page }, signal);
     },
     enabled: !!activeSource,
     staleTime: 5 * 60 * 1000,
@@ -124,10 +198,11 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
       for (const c of rawClasses) {
         const id = c.id;
         const name = c.name;
+        const pid = c.pid !== undefined ? String(c.pid) : undefined;
         if (id !== undefined && name) {
           const trimmedName = String(name).trim();
           if (!yellowFilter || !isAdultContent(trimmedName)) {
-            normalizedClasses.push({ id: String(id), name: trimmedName });
+            normalizedClasses.push({ id: String(id), name: trimmedName, pid });
           }
         }
       }
@@ -206,38 +281,81 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
         </div>
       </div>
 
-      {/* 分类 Chips */}
-      {classes.length > 0 && (
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 mb-4 scrollbar-none">
+      {/* 一级分类 Chips */}
+      {rootClasses.length > 0 && (
+        <div
+          className={cn(
+            'flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none',
+            currentSubClasses.length > 0 ? 'mb-2' : 'mb-4'
+          )}
+        >
           <button
             type="button"
             className={cn(
-              'px-2.5 py-1 rounded-full text-xs transition-colors shrink-0',
-              typeId === undefined
+              'px-2.5 py-1 rounded-full text-xs font-medium transition-colors shrink-0',
+              selectedParentId === undefined
                 ? 'bg-accent text-on-accent'
                 : 'bg-chip text-muted hover:text-content hover:bg-hover'
             )}
-            onClick={() => handleSelectType(undefined)}
-            aria-pressed={typeId === undefined}
+            onClick={() => handleSelectParent(undefined)}
+            aria-pressed={selectedParentId === undefined}
           >
             全部
           </button>
-          {classes.map((c) => {
-            const isSelected = typeId !== undefined && String(typeId) === c.id;
+          {rootClasses.map((c) => {
+            const isSelected = selectedParentId === c.id;
             return (
               <button
                 key={c.id}
                 type="button"
                 className={cn(
-                  'px-2.5 py-1 rounded-full text-xs transition-colors shrink-0',
+                  'px-2.5 py-1 rounded-full text-xs font-medium transition-colors shrink-0',
                   isSelected
                     ? 'bg-accent text-on-accent'
                     : 'bg-chip text-muted hover:text-content hover:bg-hover'
                 )}
-                onClick={() => handleSelectType(c.id)}
+                onClick={() => handleSelectParent(c.id)}
                 aria-pressed={isSelected}
               >
                 {c.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 二级细分子类 Chips（仅在当前一级分类有子类时展开） */}
+      {currentSubClasses.length > 0 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 mb-4 scrollbar-none pl-1">
+          <button
+            type="button"
+            className={cn(
+              'px-2 py-0.5 rounded-full text-[11px] transition-colors shrink-0',
+              selectedSubId === undefined
+                ? 'bg-accent/15 text-accent font-medium border border-accent/30'
+                : 'bg-chip/60 text-muted hover:text-content hover:bg-hover'
+            )}
+            onClick={() => handleSelectSub(undefined)}
+            aria-pressed={selectedSubId === undefined}
+          >
+            全部{currentParentName}
+          </button>
+          {currentSubClasses.map((sub) => {
+            const isSelected = selectedSubId === sub.id;
+            return (
+              <button
+                key={sub.id}
+                type="button"
+                className={cn(
+                  'px-2 py-0.5 rounded-full text-[11px] transition-colors shrink-0',
+                  isSelected
+                    ? 'bg-accent/15 text-accent font-medium border border-accent/30'
+                    : 'bg-chip/60 text-muted hover:text-content hover:bg-hover'
+                )}
+                onClick={() => handleSelectSub(sub.id)}
+                aria-pressed={isSelected}
+              >
+                {sub.name}
               </button>
             );
           })}

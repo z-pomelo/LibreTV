@@ -35,15 +35,20 @@ function parseClasses(raw: unknown): VodClassItem[] {
       const obj = item as Record<string, unknown>;
       const id = obj.type_id ?? obj.id;
       const name = obj.type_name ?? obj.name;
+      const pid = obj.type_pid ?? obj.pid;
       if (
         (typeof id === 'number' || (typeof id === 'string' && id.trim() !== '')) &&
         typeof name === 'string' &&
         name.trim() !== ''
       ) {
-        result.push({
+        const entry: VodClassItem = {
           id: typeof id === 'number' ? id : id.trim(),
           name: name.trim(),
-        });
+        };
+        if (typeof pid === 'number' || (typeof pid === 'string' && pid.trim() !== '')) {
+          entry.pid = typeof pid === 'number' ? pid : pid.trim();
+        }
+        result.push(entry);
       }
     }
   }

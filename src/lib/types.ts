@@ -130,6 +130,8 @@ export interface BangumiCalendarResponse {
 export interface VodClassItem {
   id: number | string;
   name: string;
+  /** 父分类 ID（type_pid），0 或缺失表示顶级分类 */
+  pid?: number | string;
 }
 
 /** 点播源首页推荐响应数据契约 */
