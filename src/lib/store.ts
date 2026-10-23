@@ -19,6 +19,8 @@ export interface AppSettings {
   yellowFilter: boolean;
   adFilter: boolean;
   doubanEnabled: boolean;
+  /** 隐藏画质未测到 / 探测失败的来源（默认开启，全部未测到时回退展示） */
+  hideUnavailableSources: boolean;
   /** 首页推荐数据源：豆瓣热门 / Bangumi 每日放送（免 key）/ 影视热榜（60s API）/ 点播源首页 */
   recommendSource: 'douban' | 'bangumi' | 'hot-list' | 'vod';
   /** 记录用户在首页推荐中选中的点播源 key */
@@ -337,6 +339,7 @@ export const useAppStore = create<AppState>()(
       yellowFilter: true,
       adFilter: true,
       doubanEnabled: true,
+      hideUnavailableSources: true,
       recommendSource: getInitialRecommendSource(),
       recommendSourceTouched: false,
       selectedRecommendVodKey: undefined,
@@ -873,6 +876,10 @@ export const useAppStore = create<AppState>()(
                   : true;
         }
 
+        if (typeof (state as unknown as { hideUnavailableSources?: unknown }).hideUnavailableSources !== 'boolean') {
+          state.hideUnavailableSources = true;
+        }
+
         // 迁移完成后清掉旧字段，避免内存里同时存在两套语义
         for (const stale of ['autoSkipIntro', 'autoSkipOpening', 'autoSkipMiddle', 'autoSkipOutro']) {
           delete (state as unknown as Record<string, unknown>)[stale];
@@ -916,6 +923,7 @@ export const useAppStore = create<AppState>()(
         yellowFilter: s.yellowFilter,
         adFilter: s.adFilter,
         doubanEnabled: s.doubanEnabled,
+        hideUnavailableSources: s.hideUnavailableSources,
         recommendSource: s.recommendSource,
         recommendSourceTouched: s.recommendSourceTouched,
         selectedRecommendVodKey: s.selectedRecommendVodKey,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SearchResultItem, SourceConfig } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
 import { qualityKey } from '@/lib/quality';
@@ -83,8 +83,10 @@ export function AggregatedCard({
 }) {
   const imageProxyMode = useAppStore((s) => s.imageProxyMode);
   const customImageProxy = useAppStore((s) => s.customImageProxy);
+  const hideUnavailableSources = useAppStore((s) => s.hideUnavailableSources);
   const [imgFailed, setImgFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [showFailed, setShowFailed] = useState(false);
   const showImg = !!group.pic && !imgFailed;
 
   const multi = group.items.length > 1;
@@ -131,12 +133,35 @@ export function AggregatedCard({
       .sort((a, b) => height(b.item) - height(a.item) || a.index - b.index)
       .map((entry) => entry.item);
   }, [group.items, qualities]);
+
+  // 判断是否探测失败（未测到）。处于探测中或尚未探测的不归为失败。
+  const isItemFailed = useCallback(
+    (item: SearchResultItem) => {
+      const k = qualityKey(item.sourceKey, item.vodId);
+      return !probing[k] && Boolean(qualities[k]?.error);
+    },
+    [probing, qualities]
+  );
+
+  const availableItems = useMemo(
+    () => sortedItems.filter((item) => !isItemFailed(item)),
+    [sortedItems, isItemFailed]
+  );
+  const failedItems = useMemo(
+    () => sortedItems.filter((item) => isItemFailed(item)),
+    [sortedItems, isItemFailed]
+  );
+
+  // 仅当开启过滤、且存在有效可用源、且存在探测失败源时才执行过滤隐藏；全部失败时回退展示，防止卡片变空
+  const shouldFilter = hideUnavailableSources && availableItems.length > 0 && failedItems.length > 0;
+  const displayItems = shouldFilter ? availableItems : sortedItems;
+
   const bestHeight = sortedItems.reduce((max, item) => Math.max(max, heightOf(item)), 0);
   // 并列最高时只强调排在第一的那一行：三个源里框两个等于没有推荐
   const firstBest = sortedItems.find((item) => bestHeight > 0 && heightOf(item) === bestHeight);
   const bestKey = firstBest ? qualityKey(firstBest.sourceKey, firstBest.vodId) : undefined;
   // 各源集数一致时（常见：同剧多源同步更新）只在表头说一次，逐行不再重复
-  const remarksList = sortedItems.map((item) => compactRemarks(item.remarks));
+  const remarksList = displayItems.map((item) => compactRemarks(item.remarks));
   const sharedRemarks =
     remarksList.length > 0 && remarksList.every((label) => label && label === remarksList[0])
       ? remarksList[0]
@@ -249,7 +274,7 @@ export function AggregatedCard({
         <div className="border-t border-line p-2.5 animate-fade-in">
           <div className="flex items-baseline justify-between gap-2 mb-1.5">
             <p className="text-[10px] text-faint">
-              选择来源
+              {shouldFilter ? `可用来源 (${availableItems.length}/${group.items.length})` : '选择来源'}
               {sharedRemarks ? ` · 均 ${sharedRemarks}` : ''}
             </p>
             {progress.total > 0 &&
@@ -271,7 +296,7 @@ export function AggregatedCard({
             四段排开，信息密度更高也更容易纵向扫读。
           */}
           <div className="flex flex-col gap-1.5">
-            {sortedItems.map((item) => {
+            {displayItems.map((item) => {
               const itemKey = qualityKey(item.sourceKey, item.vodId);
               const label = compactRemarks(item.remarks);
               const isBest = itemKey === bestKey;
@@ -324,6 +349,79 @@ export function AggregatedCard({
                 </div>
               );
             })}
+
+            {shouldFilter && (
+              <div className="pt-0.5">
+                <div className="flex items-center justify-between px-2 py-1 text-[11px] text-faint bg-chip/60 rounded-md">
+                  <span>
+                    {showFailed ? `已显示未测到来源（${failedItems.length} 个）` : `已隐藏 ${failedItems.length} 个未测到来源`}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-accent hover:underline focus-visible:outline-none text-[11px] font-medium"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowFailed((prev) => !prev);
+                    }}
+                  >
+                    {showFailed ? '收起' : '展开查看'}
+                  </button>
+                </div>
+                {showFailed && (
+                  <div className="flex flex-col gap-1.5 mt-1.5">
+                    {failedItems.map((item) => {
+                      const itemKey = qualityKey(item.sourceKey, item.vodId);
+                      const label = compactRemarks(item.remarks);
+                      return (
+                        <div
+                          key={`${item.sourceKey}_${item.vodId}`}
+                          role="button"
+                          tabIndex={0}
+                          className={cn(
+                            'group flex w-full min-w-0 items-center gap-2 rounded-lg border px-2.5 py-2',
+                            'text-xs transition-all cursor-pointer opacity-75 hover:opacity-100',
+                            'bg-chip hover:border-accent hover:bg-accent/10',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
+                            'border-line',
+                            item.isAdult && 'border-pink-500/30'
+                          )}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpen(item);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter' && e.key !== ' ') return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onOpen(item);
+                          }}
+                          aria-label={`使用 ${item.sourceName} 播放${label ? `，${label}` : ''}`}
+                        >
+                          <span className="font-medium text-content truncate flex-1 min-w-0">{item.sourceName}</span>
+                          <QualityBadge
+                            entry={qualities[itemKey]}
+                            loading={probing[itemKey]}
+                            onRetry={() => retry([item])}
+                            className="min-w-[3.25rem] justify-center tabular-nums"
+                          />
+                          {label && (
+                            <span className="text-faint shrink-0 tabular-nums">{label}</span>
+                          )}
+                          <svg
+                            className="w-3.5 h-3.5 text-accent shrink-0 transition-transform group-hover:translate-x-0.5"
+                            fill="currentColor"
+                            viewBox="0 0 24 24"
+                            aria-hidden
+                          >
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

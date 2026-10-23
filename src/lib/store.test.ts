@@ -449,3 +449,13 @@ describe('跳过片段标记', () => {
     expect(store().skipMarks).toEqual({});
   });
 });
+
+describe('hideUnavailableSources 偏好设置', () => {
+  it('默认开启并在 updateSettings 时可更新', () => {
+    expect(store().hideUnavailableSources).toBe(true);
+    store().updateSettings({ hideUnavailableSources: false });
+    expect(store().hideUnavailableSources).toBe(false);
+    store().updateSettings({ hideUnavailableSources: true });
+    expect(store().hideUnavailableSources).toBe(true);
+  });
+});

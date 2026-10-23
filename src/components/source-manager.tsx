@@ -583,6 +583,12 @@ function PlaybackPanel() {
           checked={store.autoSkipSegments}
           onChange={(v) => store.updateSettings({ autoSkipSegments: v })}
         />
+        <ToggleRow
+          label="隐藏未测到来源"
+          description="在多源列表中自动隐藏画质探测失败（未测到）的来源，保持列表精简（若全部来源均未测到则保留展示）"
+          checked={store.hideUnavailableSources}
+          onChange={(v) => store.updateSettings({ hideUnavailableSources: v })}
+        />
       </div>
 
       {markCount > 0 && (
