@@ -8,6 +8,7 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 ENV DOCKER_BUILD=1
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_OPTIONS="--max-old-space-size=2048"
 RUN npm run build
 
 # ---- 运行阶段 ----

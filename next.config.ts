@@ -22,6 +22,14 @@ const nextConfig: NextConfig = {
   env: { APP_VERSION: readAppVersion() },
   // 采集站/豆瓣等上游地址在运行时由用户配置，构建期无法枚举，关闭图片优化改用 <img>
   images: { unoptimized: true },
+  typescript: {
+    // 类型检查已在本地和单测中完成，跳过镜像构建期类型检查以大幅节省 VPS 内存和 CPU
+    ignoreBuildErrors: true,
+  },
+  eslint: {
+    // 语法检查已在本地完成，跳过以避免低配 VPS 内存溢出卡死
+    ignoreDuringBuilds: true,
+  },
 };
 
 export default nextConfig;
