@@ -18,6 +18,7 @@ export type IconName =
   | 'clock'
   | 'check'
   | 'arrowDown'
+  | 'arrowLeft'
   | 'undo'
   | 'trash'
   | 'filter'
@@ -28,6 +29,14 @@ export type IconName =
 
 const PATHS: Record<IconName, ReactNode> = {
   close: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />,
+  arrowLeft: (
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"
+    />
+  ),
   edit: (
     <path
       strokeLinecap="round"

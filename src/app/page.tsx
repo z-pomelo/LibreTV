@@ -51,10 +51,18 @@ function HomeContent() {
   const [streamedOutcomes, setStreamedOutcomes] = useState<SourceSearchOutcome[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // URL 驱动搜索：?s= 变化时回填输入框
+  // URL 驱动搜索：?s= 变化时同步输入框
   useEffect(() => {
-    if (urlQuery) setInput(urlQuery);
+    setInput(urlQuery);
   }, [urlQuery]);
+
+  const handleGoBack = () => {
+    if (typeof window !== 'undefined' && window.history.length > 1) {
+      router.back();
+    } else {
+      router.push('/', { scroll: false });
+    }
+  };
 
   // 源名回显：失败/停用提示里显示友好名称而非裸 key
   const sourceName = (key: string) =>
@@ -244,6 +252,9 @@ function HomeContent() {
                       setInput('');
                       searchHistory.resetActive();
                       inputRef.current?.focus();
+                      if (urlQuery) {
+                        handleGoBack();
+                      }
                     }}
                     aria-label="清空"
                   >
@@ -283,21 +294,32 @@ function HomeContent() {
         {/* 搜索结果 */}
         {urlQuery && (
           <section aria-label="搜索结果" className="mb-10">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm text-muted">
-                “<span className="text-content">{urlQuery}</span>” 的搜索结果
-                {isSearching ? (
-                  <span className="text-faint">
-                    （已就绪 {streamedOutcomes.length}/{selectedSources.length} 个源…）
-                  </span>
-                ) : (
-                  searchQuery.data && (
+            <div className="flex items-center justify-between mb-3 gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <button
+                  type="button"
+                  onClick={handleGoBack}
+                  className="btn-ghost flex items-center gap-1 px-2.5 py-1 rounded-lg border border-line text-xs font-medium text-muted hover:text-content hover:bg-hover hover:border-accent/40 transition-all shrink-0 cursor-pointer"
+                  aria-label="返回首页"
+                >
+                  <Icon name="arrowLeft" className="w-3.5 h-3.5" />
+                  <span>返回</span>
+                </button>
+                <h2 className="text-sm text-muted truncate">
+                  “<span className="text-content">{urlQuery}</span>” 的搜索结果
+                  {isSearching ? (
                     <span className="text-faint">
-                      （{groups.length} 部影片 · {list.length} 条结果{failures.length > 0 && `，${failures.length} 个源失败`}）
+                      （已就绪 {streamedOutcomes.length}/{selectedSources.length} 个源…）
                     </span>
-                  )
-                )}
-              </h2>
+                  ) : (
+                    searchQuery.data && (
+                      <span className="text-faint">
+                        （{groups.length} 部影片 · {list.length} 条结果{failures.length > 0 && `，${failures.length} 个源失败`}）
+                      </span>
+                    )
+                  )}
+                </h2>
+              </div>
             </div>
 
             {failures.length > 0 && (

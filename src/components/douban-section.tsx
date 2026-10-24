@@ -25,6 +25,8 @@ export function RecommendSection({ onPick }: { onPick: (title: string) => void }
   return <DoubanView onPick={onPick} />;
 }
 
+const DOUBAN_SESSION_KEY = 'libretv-douban-memory';
+
 /**
  * 豆瓣推荐：影视切换 + 标签筛选。
  * 一次性渲染全部条目：数据本就一次拉全（50 条），卡片图片又是 lazy 加载，
@@ -33,6 +35,35 @@ export function RecommendSection({ onPick }: { onPick: (title: string) => void }
 function DoubanView({ onPick }: { onPick: (title: string) => void }) {
   const [type, setType] = useState<'movie' | 'tv'>('movie');
   const [tag, setTag] = useState('热门');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = sessionStorage.getItem(DOUBAN_SESSION_KEY);
+      if (raw) {
+        const mem = JSON.parse(raw);
+        if (mem.type) setType(mem.type);
+        if (mem.tag) setTag(mem.tag);
+        if (mem.scrollY > 0) {
+          setTimeout(() => {
+            window.scrollTo({ top: mem.scrollY, behavior: 'instant' });
+          }, 50);
+        }
+      }
+    } catch {}
+  }, []);
+
+  const handleItemPick = (title: string) => {
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.setItem(
+          DOUBAN_SESSION_KEY,
+          JSON.stringify({ type, tag, scrollY: window.scrollY })
+        );
+      } catch {}
+    }
+    onPick(title);
+  };
 
   const query = useQuery({
     queryKey: ['douban', type, tag],
@@ -87,7 +118,7 @@ function DoubanView({ onPick }: { onPick: (title: string) => void }) {
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
           {items.map((item) => (
-            <DoubanCard key={item.id} item={item} onClick={() => onPick(item.title)} />
+            <DoubanCard key={item.id} item={item} onClick={() => handleItemPick(item.title)} />
           ))}
         </div>
       )}
@@ -98,6 +129,34 @@ function DoubanView({ onPick }: { onPick: (title: string) => void }) {
 /** Bangumi 每日放送：星期筛选，一次拉全量无分页 */
 function BangumiView({ onPick }: { onPick: (title: string) => void }) {
   const [weekday, setWeekday] = useState<number | 'all'>('all');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = sessionStorage.getItem('libretv-bangumi-memory');
+      if (raw) {
+        const mem = JSON.parse(raw);
+        if (mem.weekday !== undefined) setWeekday(mem.weekday);
+        if (mem.scrollY > 0) {
+          setTimeout(() => {
+            window.scrollTo({ top: mem.scrollY, behavior: 'instant' });
+          }, 50);
+        }
+      }
+    } catch {}
+  }, []);
+
+  const handleItemPick = (title: string) => {
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.setItem(
+          'libretv-bangumi-memory',
+          JSON.stringify({ weekday, scrollY: window.scrollY })
+        );
+      } catch {}
+    }
+    onPick(title);
+  };
 
   const query = useQuery({
     queryKey: ['bangumi-calendar'],
@@ -131,7 +190,7 @@ function BangumiView({ onPick }: { onPick: (title: string) => void }) {
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
           {items.map((item) => (
-            <DoubanCard key={item.id} item={item} onClick={() => onPick(item.title)} />
+            <DoubanCard key={item.id} item={item} onClick={() => handleItemPick(item.title)} />
           ))}
         </div>
       )}
@@ -151,6 +210,34 @@ const HOT_LISTS = [
 /** 影视热榜（60s API）：豆瓣五个周榜 + 百度热播剧，chips 切换 */
 function HotListView({ onPick }: { onPick: (title: string) => void }) {
   const [listId, setListId] = useState(HOT_LISTS[0].id);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = sessionStorage.getItem('libretv-hotlist-memory');
+      if (raw) {
+        const mem = JSON.parse(raw);
+        if (mem.listId) setListId(mem.listId);
+        if (mem.scrollY > 0) {
+          setTimeout(() => {
+            window.scrollTo({ top: mem.scrollY, behavior: 'instant' });
+          }, 50);
+        }
+      }
+    } catch {}
+  }, []);
+
+  const handleItemPick = (title: string) => {
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.setItem(
+          'libretv-hotlist-memory',
+          JSON.stringify({ listId, scrollY: window.scrollY })
+        );
+      } catch {}
+    }
+    onPick(title);
+  };
 
   const query = useQuery({
     queryKey: ['hot-list', listId],
@@ -176,7 +263,7 @@ function HotListView({ onPick }: { onPick: (title: string) => void }) {
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
           {items.map((item) => (
-            <DoubanCard key={item.id} item={item} onClick={() => onPick(item.title)} />
+            <DoubanCard key={item.id} item={item} onClick={() => handleItemPick(item.title)} />
           ))}
         </div>
       )}

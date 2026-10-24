@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/client-api';
 import { useAppStore } from '@/lib/store';
@@ -21,6 +21,42 @@ interface NormalizedVodClass {
   id: string;
   name: string;
   pid?: string;
+}
+
+const VOD_SESSION_KEY = 'libretv-vod-home-memory';
+
+export interface VodHomeSessionMemory {
+  sourceKey: string;
+  parentId?: string;
+  subId?: string;
+  page: number;
+  items: NormalizedVodItem[];
+  classes: NormalizedVodClass[];
+  scrollY: number;
+  lastClickedId?: string;
+}
+
+let vodMemoryFallback: VodHomeSessionMemory | null = null;
+
+export function getVodHomeMemory(): VodHomeSessionMemory | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(VOD_SESSION_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return vodMemoryFallback;
+}
+
+export function setVodHomeMemory(mem: VodHomeSessionMemory | null) {
+  vodMemoryFallback = mem;
+  if (typeof window === 'undefined') return;
+  try {
+    if (mem) {
+      sessionStorage.setItem(VOD_SESSION_KEY, JSON.stringify(mem));
+    } else {
+      sessionStorage.removeItem(VOD_SESSION_KEY);
+    }
+  } catch {}
 }
 
 /** 统一调用点播源首页数据，优先使用 api.sourceHome */
@@ -68,22 +104,79 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     return activeSources[0];
   }, [activeSources, selectedRecommendVodKey]);
 
-  // 3. 内部状态：一级分类、二级子分类、页码与条目
-  const [selectedParentId, setSelectedParentId] = useState<string | undefined>(undefined);
-  const [selectedSubId, setSelectedSubId] = useState<string | undefined>(undefined);
-  const [page, setPage] = useState<number>(1);
-  const [accumulatedItems, setAccumulatedItems] = useState<NormalizedVodItem[]>([]);
-  const [classes, setClasses] = useState<NormalizedVodClass[]>([]);
-
-  // 外部或内部导致当前激活源变更时同步重置
   const activeSourceKey = activeSource?.key;
-  useEffect(() => {
-    setSelectedParentId(undefined);
-    setSelectedSubId(undefined);
-    setPage(1);
-    setAccumulatedItems([]);
-    setClasses([]);
+
+  // 3. 内部状态：在组件创建时直接从 session 记忆中同步初始化（避免二次 render 导致 items 被截断）
+  const initialMem = useMemo(() => {
+    const m = getVodHomeMemory();
+    if (!m) return null;
+    if (!activeSourceKey || m.sourceKey === activeSourceKey) return m;
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSourceKey]);
+
+  const [selectedParentId, setSelectedParentId] = useState<string | undefined>(
+    () => initialMem?.parentId
+  );
+  const [selectedSubId, setSelectedSubId] = useState<string | undefined>(
+    () => initialMem?.subId
+  );
+  const [page, setPage] = useState<number>(() => initialMem?.page ?? 1);
+  const [accumulatedItems, setAccumulatedItems] = useState<NormalizedVodItem[]>(
+    () => initialMem?.items ?? []
+  );
+  const [classes, setClasses] = useState<NormalizedVodClass[]>(
+    () => initialMem?.classes ?? []
+  );
+
+  const prevSourceKeyRef = useRef<string | undefined>(activeSourceKey);
+
+  // 外部或内部导致当前激活源变更时同步重置（仅在确定从一个真实源切换到另一个真实源时重置）
+  useEffect(() => {
+    if (!activeSourceKey) return;
+    if (prevSourceKeyRef.current && prevSourceKeyRef.current !== activeSourceKey) {
+      setVodHomeMemory(null);
+      setSelectedParentId(undefined);
+      setSelectedSubId(undefined);
+      setPage(1);
+      setAccumulatedItems([]);
+      setClasses([]);
+    }
+    prevSourceKeyRef.current = activeSourceKey;
+  }, [activeSourceKey]);
+
+  // 恢复之前的滚动条高度与卡片焦点（精准定位至点击的最后一部影片，不再漂移到中间）
+  const hasRestoredScrollRef = useRef(false);
+  useEffect(() => {
+    if (hasRestoredScrollRef.current) return;
+    const mem = getVodHomeMemory();
+    if (!mem || mem.sourceKey !== activeSourceKey || accumulatedItems.length === 0) return;
+
+    hasRestoredScrollRef.current = true;
+
+    const doScroll = () => {
+      if (mem.lastClickedId) {
+        const targetEl = document.getElementById(`vod-card-${mem.lastClickedId}`);
+        if (targetEl) {
+          targetEl.scrollIntoView({ block: 'center', behavior: 'instant' });
+          targetEl.focus?.({ preventScroll: true });
+          return;
+        }
+      }
+      if (mem.scrollY > 0) {
+        window.scrollTo({ top: mem.scrollY, behavior: 'instant' });
+      }
+    };
+
+    doScroll();
+    // 双重保障：等待 DOM 布局稳定后再次校准，防止图片撑开后漂移
+    const timer1 = setTimeout(doScroll, 80);
+    const timer2 = setTimeout(doScroll, 250);
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
+  }, [activeSourceKey, accumulatedItems.length]);
 
   // 4. 解析分类层级（一级大类与二级细分子类）
   const { rootClasses, childMap } = useMemo(() => {
@@ -153,6 +246,7 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     }
     setPage(1);
     setAccumulatedItems([]);
+    setVodHomeMemory(null);
   };
 
   // 切换二级分类
@@ -161,6 +255,7 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     setSelectedSubId(newSubId);
     setPage(1);
     setAccumulatedItems([]);
+    setVodHomeMemory(null);
   };
 
   // 6. 数据拉取
@@ -219,7 +314,7 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     }
 
     if (page === 1) {
-      setAccumulatedItems(normalized);
+      setAccumulatedItems((prev) => (prev.length > normalized.length ? prev : normalized));
     } else {
       setAccumulatedItems((prev) => {
         const existingIds = new Set(prev.map((i) => i.id));
@@ -245,6 +340,22 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
       </section>
     );
   }
+
+  const handleItemPick = (item: NormalizedVodItem) => {
+    if (activeSourceKey && typeof window !== 'undefined') {
+      setVodHomeMemory({
+        sourceKey: activeSourceKey,
+        parentId: selectedParentId,
+        subId: selectedSubId,
+        page,
+        items: accumulatedItems,
+        classes,
+        scrollY: window.scrollY,
+        lastClickedId: item.id,
+      });
+    }
+    onPick(item.name);
+  };
 
   return (
     <section aria-label="点播源首页推荐">
@@ -338,7 +449,7 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
         <>
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
             {accumulatedItems.map((item) => (
-              <VodItemCard key={item.id} item={item} onClick={() => onPick(item.name)} />
+              <VodItemCard key={item.id} item={item} onClick={() => handleItemPick(item)} />
             ))}
           </div>
 
@@ -378,6 +489,7 @@ function VodItemCard({ item, onClick }: { item: NormalizedVodItem; onClick: () =
 
   return (
     <div
+      id={`vod-card-${item.id}`}
       className="card cursor-pointer hover:scale-[1.03] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       role="button"
       tabIndex={0}

@@ -6,6 +6,7 @@ out/
 *.tsbuildinfo
 vitest-results.json
 *.log
+*.tar.gz
 
 # AI 工具产物（本机会话/缓存数据，不入库）
 .mimosa/
