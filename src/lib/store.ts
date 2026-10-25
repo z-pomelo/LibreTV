@@ -212,6 +212,8 @@ interface AppState extends AppSettings {
   sourceHealth: Record<string, SourceHealthEntry>;
   /** 画质缓存（按 `sourceKey:vodId`）：播放实测与搜索时懒探测共用一份 */
   qualityMap: Record<string, QualityEntry>;
+  /** 部署者是否通过 DISABLE_STREAM_PROXY 环境变量禁用了媒体流代理（服务端下发，不持久化） */
+  disableStreamProxy: boolean;
   /** 已出现过的 env 预置订阅 URL（持久化：用户删除后不再被自动加回） */
   envSubsSeen: string[];
   addCustomApi: (api: Omit<SourceConfig, 'key'> & { key?: string }) => void;
@@ -334,6 +336,7 @@ export const useAppStore = create<AppState>()(
       liveProbeResults: {},
       sourceHealth: {},
       qualityMap: {},
+      disableStreamProxy: false,
       envSubsSeen: [],
       selectedKeys: [],
       yellowFilter: true,

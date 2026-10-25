@@ -3,6 +3,7 @@ import { guardRequest, jsonError } from '@/lib/api-guard';
 import { checkLiveUrlAllowed, isBlockedByDNS, isValidProxyUrl } from '@/lib/ssrf';
 import { fetchWithSafeRedirects } from '@/lib/fetch-utils';
 import { rewriteM3u8, LIVE_STREAM_BASE } from '@/lib/m3u8';
+import { isStreamProxyDisabled } from '@/lib/env-stream-proxy';
 
 /**
  * 代理目标地址的两种传入形式：
@@ -57,6 +58,27 @@ function looksLikeImageUrl(target: string): boolean {
   return isAnonymousImageHost(host);
 }
 
+/** 是否为音视频媒体流（m3u8 播放列表、分片、视频文件） */
+function isMediaTarget(target: string): boolean {
+  try {
+    const pathname = new URL(target).pathname.toLowerCase();
+    return (
+      pathname.endsWith('.m3u8') ||
+      pathname.endsWith('.ts') ||
+      pathname.endsWith('.m4s') ||
+      pathname.endsWith('.mp4') ||
+      pathname.endsWith('.flv') ||
+      pathname.endsWith('.webm') ||
+      pathname.endsWith('.mkv') ||
+      pathname.endsWith('.aac') ||
+      pathname.endsWith('.mp3') ||
+      pathname.includes('.m3u8')
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** 解码路径段形式的代理目标（网关可能已把 %2F 解码为 /，失败时原样返回） */
 export function decodePathTarget(encodedUrl: string): string {
   try { return decodeURIComponent(encodedUrl); } catch { return encodedUrl; }
@@ -77,6 +99,13 @@ export async function handleProxyRequest(req: Request, targetUrl: string): Promi
   }
   if (await isBlockedByDNS(targetUrl)) {
     return new NextResponse('不允许访问私有/保留网络地址', { status: 403 });
+  }
+
+  // 部署者若通过 DISABLE_STREAM_PROXY=true 禁用了媒体流代理，直接拦截视频/切片请求（防止消耗服务器流量）
+  if (isStreamProxyDisabled() && !looksLikeImageUrl(targetUrl) && isMediaTarget(targetUrl)) {
+    return new NextResponse('媒体流代理已被管理员禁用（防止消耗服务器流量），请使用直连播放', {
+      status: 403,
+    });
   }
 
   const headers: Record<string, string> = { 'User-Agent': UA, Accept: '*/*' };
@@ -117,6 +146,19 @@ export async function handleProxyRequest(req: Request, targetUrl: string): Promi
   const isM3u8 =
     contentType.includes('mpegurl') || contentType.includes('x-mpegurl') ||
     targetUrl.toLowerCase().endsWith('.m3u8');
+
+  // 若响应内容属于媒体流且已配置禁用流代理，立即断开上游并拦截
+  const isMediaStream =
+    isM3u8 ||
+    contentType.startsWith('video/') ||
+    contentType.startsWith('audio/') ||
+    contentType.includes('mpegurl');
+  if (isStreamProxyDisabled() && isMediaStream) {
+    try { await response.body?.cancel(); } catch { /* 忽略 */ }
+    return new NextResponse('媒体流代理已被管理员禁用（防止消耗服务器流量），请使用直连播放', {
+      status: 403,
+    });
+  }
 
   // m3u8 文本：重写为代理地址（以重定向后的最终 URL 为 base 解析相对地址）
   if (isM3u8) {
@@ -168,6 +210,11 @@ export async function handleProxyRequest(req: Request, targetUrl: string): Promi
 export async function handleLiveStreamRequest(req: Request, targetUrl: string): Promise<Response> {
   const guarded = guardRequest(req);
   if (guarded) return guarded;
+
+  // 部署者若通过 DISABLE_STREAM_PROXY=true 禁用了媒体流代理，直接拒绝长连接转发
+  if (isStreamProxyDisabled()) {
+    return jsonError('直播流代理已被管理员禁用（防止消耗服务器流量），请使用直连播放', 403);
+  }
 
   const verdict = await checkLiveUrlAllowed(targetUrl);
   if (!verdict.ok) return jsonError(verdict.reason, 403);

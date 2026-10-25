@@ -141,4 +141,8 @@ export async function applyEnvPresets(status: AuthStatusResponse): Promise<void>
       useAppStore.setState({ imageProxyMode: status.defaultImageMode });
     }
   }
+  // 部署者通过 DISABLE_STREAM_PROXY 指定是否禁用媒体流代理（防止消耗服务器流量）
+  if (typeof status.disableStreamProxy === 'boolean') {
+    useAppStore.setState({ disableStreamProxy: status.disableStreamProxy });
+  }
 }

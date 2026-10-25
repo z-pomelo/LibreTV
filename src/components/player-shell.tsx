@@ -13,6 +13,7 @@ import {
 import { loadCacheSettings } from '@/lib/video-cache';
 import { formatTime } from '@/lib/utils';
 import { prefersTouchPointer } from '@/lib/touch-pointer';
+import { useAppStore } from '@/lib/store';
 import {
   findActiveSegment,
   findCrossedEnding,
@@ -133,6 +134,7 @@ export function PlayerShell({
   // 起播前的品牌占位图（沿用旧版 nomedia 素材），实际开始播放后隐藏
   const [showPoster, setShowPoster] = useState(true);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disableStreamProxy = useAppStore((s) => s.disableStreamProxy);
 
   // 始终持有最新 props/回调，避免重建播放器
   const propsRef = useRef({
@@ -426,9 +428,10 @@ export function PlayerShell({
           break;
         case 'retry': {
           // 前两次重试保留直连；达到退避阈值或清单级错误时升级为代理形式
-          // （同源 cookie 鉴权，规避 CORS/防盗链/分片被拒）
+          // （同源 cookie 鉴权，规避 CORS/防盗链/分片被拒；若部署者禁用代理则不回退）
           if (
             allowProxyFallback &&
+            !disableStreamProxy &&
             !mediaUrl.startsWith('/api/proxy') &&
             (decision.attempt >= 2 || data.details === 'manifestLoadError')
           ) {
@@ -436,7 +439,11 @@ export function PlayerShell({
             setupHls(video, `/api/proxy?url=${encodeURIComponent(mediaUrl)}`, false);
             return;
           }
-          showHint(`${decision.reason}（第 ${decision.attempt} 次）...`);
+          if (disableStreamProxy && (decision.attempt >= 2 || data.details === 'manifestLoadError')) {
+            showHint('直连播放失败（已禁用服务器代理以节省流量），正在重试...');
+          } else {
+            showHint(`${decision.reason}（第 ${decision.attempt} 次）...`);
+          }
           recovery.schedule(decision.delayMs, () => hls.startLoad());
           break;
         }
@@ -449,7 +456,8 @@ export function PlayerShell({
         case 'switch-source': {
           // 覆盖播放开始后的场景：起播失败走 setError 遮罩；
           // 播放中失败走回调弹换源面板（父级未提供回调时同样 setError）
-          const message = `${describeHlsError(data.type, data.details)}：${decision.reason}`;
+          const proxyNotice = disableStreamProxy ? '（已禁用服务器代理以节省流量）' : '';
+          const message = `${describeHlsError(data.type, data.details)}：${decision.reason}${proxyNotice}`;
           if (playbackStartedRef.current) {
             showHint(message);
             propsRef.current.onRequestSwitchSource?.(decision.reason);

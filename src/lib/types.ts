@@ -159,6 +159,8 @@ export interface AuthStatusResponse {
   defaultRecommendSource: RecommendSourceValue | null;
   /** 部署者通过 DEFAULT_IMAGE_MODE 环境变量指定的封面图加载方式默认值（未配置时为 null） */
   defaultImageMode: 'direct' | 'proxy' | null;
+  /** 部署者是否通过 DISABLE_STREAM_PROXY 环境变量禁用了视频流代理（防止消耗服务器流量） */
+  disableStreamProxy?: boolean;
 }
 
 // —— 直播 / IPTV ——

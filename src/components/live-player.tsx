@@ -6,6 +6,7 @@ import Hls, { type HlsConfig } from 'hls.js';
 import { Spinner } from './states';
 import { prefersTouchPointer } from '@/lib/touch-pointer';
 import { ART_DEFAULT_CONTROL_HIDE_MS, TOUCH_CONTROL_HIDE_MS } from '@/lib/control-hide';
+import { useAppStore } from '@/lib/store';
 
 /**
  * 直播播放器：与点播 player-shell 完全独立。
@@ -68,6 +69,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
   const [osdTitle, setOsdTitle] = useState('');
   const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disableStreamProxy = useAppStore((s) => s.disableStreamProxy);
 
   // url 变化即换台：显示频道名 2.5s
   useEffect(() => {
@@ -128,7 +130,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
         video.removeEventListener('error', onError);
         nativeCleanup = null;
         if (disposed || destroyed) return;
-        if (allowProxyFallback && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
+        if (allowProxyFallback && !disableStreamProxy && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
           showHint('直连失败，改用代理重试...');
           setupNative(video, proxyUrl(url), false, failMessage);
           return;
@@ -193,6 +195,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
         if (!playbackStarted) {
           if (
             stage === 'direct' &&
+            !disableStreamProxy &&
             !mediaUrl.startsWith(STREAM_PROXY_PREFIX) &&
             (data.details === 'manifestLoadError' || data.type === Hls.ErrorTypes.NETWORK_ERROR)
           ) {
@@ -201,9 +204,9 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
             setupHls(video, proxyUrl(url), 'proxy');
             return;
           }
-          // HLS 直连与代理均失败：可能是"无 .m3u8 后缀但内容是 MP4"的源，回退原生播放
-          showHint('HLS 解析失败，尝试原生播放...');
-          setupNative(video, url, true, `直播流加载失败${codeHint}，可能该频道已失效，请尝试其他频道`);
+          // HLS 直连失败且禁用代理，或者直连与代理均失败：尝试原生播放
+          showHint('HLS 直连解析失败，尝试原生播放...');
+          setupNative(video, url, !disableStreamProxy, `直播流加载失败${codeHint}，可能该频道已失效，请尝试其他频道`);
           return;
         }
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
@@ -256,7 +259,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       player.load();
       player.on(Mpegts.Events.ERROR, (errType: string) => {
         if (disposed || destroyed) return;
-        if (!playbackStarted && allowProxyFallback && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
+        if (!playbackStarted && allowProxyFallback && !disableStreamProxy && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
           showHint('直连失败，改用代理重试...');
           void setupFlv(video, proxyUrl(url), false);
           return;
