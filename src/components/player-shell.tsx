@@ -422,6 +422,26 @@ export function PlayerShell({
       if (!data.fatal) return;
       const recovery = recoveryRef.current;
       if (!recovery) return;
+
+      // 若开启了禁用媒体流代理，且起播前清单拉取失败（直连跨域 CORS 拦截或无法连接）：
+      // 此时因为无法通过代理回退中转，盲目退避重试毫无意义，且会导致画面一直转圈圈。
+      // 立即停止加载、关闭转圈圈并弹出常驻错误遮罩，引导用户切换其他可用源。
+      if (
+        disableStreamProxy &&
+        !mediaUrl.startsWith('/api/proxy') &&
+        (data.details === 'manifestLoadError' ||
+          data.details === 'manifestParsingError' ||
+          data.details === 'manifestLoadTimeOut')
+      ) {
+        hls.stopLoad();
+        if (artRef.current?.loading) {
+          try { artRef.current.loading.show = false; } catch {}
+        }
+        setShowPoster(false);
+        setError('直连播放失败：该视频源不支持直接访问（受跨域 CORS 或防盗链限制）。当前已开启「禁用服务器代理以节省流量」，请切换其他视频源。');
+        return;
+      }
+
       const decision = recovery.onFatal(data.type, data.details);
       switch (decision.action) {
         case 'ignore':
@@ -456,6 +476,10 @@ export function PlayerShell({
         case 'switch-source': {
           // 覆盖播放开始后的场景：起播失败走 setError 遮罩；
           // 播放中失败走回调弹换源面板（父级未提供回调时同样 setError）
+          if (artRef.current?.loading) {
+            try { artRef.current.loading.show = false; } catch {}
+          }
+          setShowPoster(false);
           const proxyNotice = disableStreamProxy ? '（已禁用服务器代理以节省流量）' : '';
           const message = `${describeHlsError(data.type, data.details)}：${decision.reason}${proxyNotice}`;
           if (playbackStartedRef.current) {
@@ -1021,11 +1045,34 @@ export function PlayerShell({
         </button>
       )}
       {error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
-          <p className="text-danger text-sm">{error}</p>
-          <button className="btn-ghost text-xs" onClick={() => location.reload()}>
-            重新加载
-          </button>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 p-6 z-20 text-center animate-fade-in">
+          <div className="w-12 h-12 rounded-full bg-danger/10 text-danger flex items-center justify-center mb-1">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <p className="text-content font-medium text-sm max-w-md leading-relaxed">{error}</p>
+          <div className="flex items-center gap-2 mt-2">
+            {propsRef.current.onRequestSwitchSource && (
+              <button
+                type="button"
+                className="btn-primary btn-sm px-4"
+                onClick={() => propsRef.current.onRequestSwitchSource?.('直连失败换源')}
+              >
+                切换其他视频源
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn-ghost btn-sm px-3"
+              onClick={() => {
+                setError('');
+                if (artRef.current) setupHls(artRef.current.video, url, true);
+              }}
+            >
+              重新连接
+            </button>
+          </div>
         </div>
       )}
       {(hint || undoSkip) && (
