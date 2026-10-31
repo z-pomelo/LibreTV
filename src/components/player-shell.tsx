@@ -200,10 +200,21 @@ export function PlayerShell({
   const targetPlaybackRateRef = useRef<number>(savedPlaybackRate);
   // 换集过程中标记为 true，防止换源时浏览器底层的 1.0 重置事件覆盖用户偏好
   const isSwitchingEpisodeRef = useRef<boolean>(false);
+  const switchingGraceTimerRef = useRef<NodeJS.Timeout | null>(null);
   // 程序代码正在设置倍速的标记，防止自身设置触发的回调被重复响应
   const isApplyingRateRef = useRef<boolean>(false);
   // 移动端长按 3 倍速标记
   const isLongPressRef = useRef<boolean>(false);
+
+  // 保持 targetPlaybackRateRef 与 store 最新状态同步（例如客户端 rehydrate 完成时）
+  useEffect(() => {
+    if (savedPlaybackRate && savedPlaybackRate > 0) {
+      targetPlaybackRateRef.current = savedPlaybackRate;
+      if (artRef.current?.video) {
+        applyTargetPlaybackRate(artRef.current.video);
+      }
+    }
+  }, [savedPlaybackRate]);
 
   /** 应用目标倍速至视频元素，并同步 defaultPlaybackRate 以对抗浏览器换源重置 */
   const applyTargetPlaybackRate = (video: HTMLVideoElement) => {
@@ -534,6 +545,10 @@ export function PlayerShell({
   const loadEpisode = (targetUrl: string) => {
     if (!targetUrl) return;
     isSwitchingEpisodeRef.current = true;
+    if (switchingGraceTimerRef.current) {
+      clearTimeout(switchingGraceTimerRef.current);
+      switchingGraceTimerRef.current = null;
+    }
     mediaHealthyRef.current = true;
     playbackStartedRef.current = false;
     videoErrorRetryUsedRef.current = false;
@@ -702,9 +717,17 @@ export function PlayerShell({
 
     art.on('video:playing', () => {
       playbackStartedRef.current = true;
-      isSwitchingEpisodeRef.current = false;
       applyTargetPlaybackRate(art.video);
       setShowPoster(false);
+      // 延时解除换集保护：防止远程加载起播瞬间，底层音频/解码管道异步发出的 1.0 ratechange 溜入
+      if (switchingGraceTimerRef.current) clearTimeout(switchingGraceTimerRef.current);
+      switchingGraceTimerRef.current = setTimeout(() => {
+        isSwitchingEpisodeRef.current = false;
+        // 稳定播放后再补一次兜底应用，确保 100% 同步
+        if (artRef.current?.video) {
+          applyTargetPlaybackRate(artRef.current.video);
+        }
+      }, 1000);
       // 仅在媒体真正恢复（有分片进入 buffer）后清错误遮罩：
       // 否则「视频轨挂了、音频轨先播出来」时会清掉遮罩，留下黑屏假死态
       if (mediaHealthyRef.current) setError('');
@@ -717,12 +740,16 @@ export function PlayerShell({
       const currentRate = art.video?.playbackRate;
       if (!currentRate || !Number.isFinite(currentRate) || currentRate <= 0) return;
 
-      // 若处于换集加载中，且速率为 1.0（而用户目标速率不是 1.0），说明是浏览器重置，忽略
+      // 若处于换集加载中，且速率为 1.0（而用户目标速率不是 1.0），说明是浏览器重置，
+      // 阻断回写并主动拉回目标倍速
       if (
         isSwitchingEpisodeRef.current &&
         Math.abs(currentRate - 1.0) < 0.01 &&
         Math.abs(targetPlaybackRateRef.current - 1.0) > 0.01
       ) {
+        if (art.video) {
+          applyTargetPlaybackRate(art.video);
+        }
         return;
       }
 
@@ -1000,6 +1027,7 @@ export function PlayerShell({
       document.removeEventListener('keydown', shortcuts);
       document.removeEventListener('visibilitychange', saveOnHide);
       if (longPressTimer) clearTimeout(longPressTimer);
+      if (switchingGraceTimerRef.current) clearTimeout(switchingGraceTimerRef.current);
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
       el?.removeEventListener('touchstart', onTouchStart);
