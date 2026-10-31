@@ -195,6 +195,37 @@ export function PlayerShell({
     hintTimerRef.current = setTimeout(() => setHint(''), 2500);
   };
 
+  // 播放倍速记忆：跨集保持用户选择的倍速，换集时不因底层重置而失效
+  const savedPlaybackRate = useAppStore((s) => s.playbackRate) || 1;
+  const targetPlaybackRateRef = useRef<number>(savedPlaybackRate);
+  // 换集过程中标记为 true，防止换源时浏览器底层的 1.0 重置事件覆盖用户偏好
+  const isSwitchingEpisodeRef = useRef<boolean>(false);
+  // 程序代码正在设置倍速的标记，防止自身设置触发的回调被重复响应
+  const isApplyingRateRef = useRef<boolean>(false);
+  // 移动端长按 3 倍速标记
+  const isLongPressRef = useRef<boolean>(false);
+
+  /** 应用目标倍速至视频元素，并同步 defaultPlaybackRate 以对抗浏览器换源重置 */
+  const applyTargetPlaybackRate = (video: HTMLVideoElement) => {
+    const target = targetPlaybackRateRef.current;
+    if (!target || !Number.isFinite(target) || target <= 0) return;
+    try {
+      isApplyingRateRef.current = true;
+      if (video.defaultPlaybackRate !== target) {
+        video.defaultPlaybackRate = target;
+      }
+      if (Math.abs(video.playbackRate - target) > 0.01) {
+        video.playbackRate = target;
+      }
+    } catch {
+      /* 忽略某些平台只读限制 */
+    } finally {
+      queueMicrotask(() => {
+        isApplyingRateRef.current = false;
+      });
+    }
+  };
+
   // 片段缓存开启时调大 hls.js 自身缓冲，缓冲之外的空窗由预取器补齐
   const buildHlsConfig = (): Partial<HlsConfig> => {
     const p = propsRef.current;
@@ -377,6 +408,7 @@ export function PlayerShell({
         restoreCleanupRef.current?.();
         restoreCleanupRef.current = null;
         ensurePrefetch(mediaUrl, prefetchAnchor);
+        applyTargetPlaybackRate(video);
         video.play().catch(() => {});
       } catch {
         // IndexedDB 读取失败时不阻塞播放，后续事件仍可再次尝试恢复。
@@ -386,7 +418,10 @@ export function PlayerShell({
     };
 
     const restoreEvents = ['loadedmetadata', 'durationchange', 'canplay'] as const;
-    const onRestoreEvent = () => { void restoreAndStart(); };
+    const onRestoreEvent = () => {
+      applyTargetPlaybackRate(video);
+      void restoreAndStart();
+    };
     restoreEvents.forEach((event) => video.addEventListener(event, onRestoreEvent));
     restoreCleanupRef.current = () => {
       restoreEvents.forEach((event) => video.removeEventListener(event, onRestoreEvent));
@@ -397,6 +432,7 @@ export function PlayerShell({
 
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
       recoveryRef.current?.markHealthy();
+      applyTargetPlaybackRate(video);
       // master playlist 的档位高度：多码率源在这里就能拿到上限
       const heights = hls.levels
         .map((level) => level.height)
@@ -497,6 +533,7 @@ export function PlayerShell({
   /** 换集：重置每集状态并切换到新 HLS 源（不重建 ArtPlayer）。 */
   const loadEpisode = (targetUrl: string) => {
     if (!targetUrl) return;
+    isSwitchingEpisodeRef.current = true;
     mediaHealthyRef.current = true;
     playbackStartedRef.current = false;
     videoErrorRetryUsedRef.current = false;
@@ -516,6 +553,7 @@ export function PlayerShell({
     setShowPoster(true);
     const art = artRef.current;
     if (!art) return;
+    applyTargetPlaybackRate(art.video);
     setupHls(art.video, targetUrl, true);
   };
 
@@ -590,6 +628,7 @@ export function PlayerShell({
       ],
       customType: {
         m3u8: (video: HTMLVideoElement, mediaUrl: string) => {
+          applyTargetPlaybackRate(video);
           setupHls(video, mediaUrl, true);
         },
       },
@@ -649,6 +688,7 @@ export function PlayerShell({
     art.video?.addEventListener('resize', reportVideoHeight);
 
     art.on('video:loadedmetadata', () => {
+      applyTargetPlaybackRate(art.video);
       // ArtPlayer 运行时支持 title 选项（类型定义未覆盖），用于界面标题展示
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -656,13 +696,43 @@ export function PlayerShell({
       } catch { /* 忽略 */ }
     });
 
+    art.on('video:canplay', () => {
+      applyTargetPlaybackRate(art.video);
+    });
+
     art.on('video:playing', () => {
       playbackStartedRef.current = true;
+      isSwitchingEpisodeRef.current = false;
+      applyTargetPlaybackRate(art.video);
       setShowPoster(false);
       // 仅在媒体真正恢复（有分片进入 buffer）后清错误遮罩：
       // 否则「视频轨挂了、音频轨先播出来」时会清掉遮罩，留下黑屏假死态
       if (mediaHealthyRef.current) setError('');
       reportVideoHeight();
+    });
+
+    art.on('video:ratechange', () => {
+      if (isApplyingRateRef.current) return;
+      if (isLongPressRef.current) return;
+      const currentRate = art.video?.playbackRate;
+      if (!currentRate || !Number.isFinite(currentRate) || currentRate <= 0) return;
+
+      // 若处于换集加载中，且速率为 1.0（而用户目标速率不是 1.0），说明是浏览器重置，忽略
+      if (
+        isSwitchingEpisodeRef.current &&
+        Math.abs(currentRate - 1.0) < 0.01 &&
+        Math.abs(targetPlaybackRateRef.current - 1.0) > 0.01
+      ) {
+        return;
+      }
+
+      targetPlaybackRateRef.current = currentRate;
+      if (art.video) {
+        try {
+          art.video.defaultPlaybackRate = currentRate;
+        } catch {}
+      }
+      useAppStore.getState().updateSettings({ playbackRate: currentRate });
     });
     art.on('video:error', () => {
       mediaHealthyRef.current = false;
@@ -881,11 +951,12 @@ export function PlayerShell({
       if (isLongPress || longPressTimer) return;
       // 控制栏 / 设置面板上的长按不触发倍速（按住进度条拖动、长按倍速菜单项会误触）
       if ((e.target as HTMLElement).closest?.('.art-controls, .art-settings')) return;
-      originalRate = art.video.playbackRate;
+      originalRate = targetPlaybackRateRef.current;
       longPressTimer = setTimeout(() => {
         if (art.video?.paused) return;
-        art.video.playbackRate = 3.0;
         isLongPress = true;
+        isLongPressRef.current = true;
+        art.video.playbackRate = 3.0;
         showHint('3 倍速');
       }, 500);
     };
@@ -894,6 +965,7 @@ export function PlayerShell({
       if (isLongPress) {
         art.video.playbackRate = originalRate;
         isLongPress = false;
+        isLongPressRef.current = false;
         showHint(`${originalRate} 倍速`);
       }
     };
@@ -927,6 +999,7 @@ export function PlayerShell({
       }
       document.removeEventListener('keydown', shortcuts);
       document.removeEventListener('visibilitychange', saveOnHide);
+      if (longPressTimer) clearTimeout(longPressTimer);
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
       el?.removeEventListener('touchstart', onTouchStart);

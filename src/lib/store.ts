@@ -39,6 +39,8 @@ export interface AppSettings {
   /** 用户是否在设置中主动选择过封面图加载方式；为 false 时部署者的 DEFAULT_IMAGE_MODE 默认值可生效 */
   imageProxyModeTouched: boolean;
   customImageProxy: string;
+  /** 播放倍速偏好（默认 1.0） */
+  playbackRate: number;
 }
 
 /** 一次订阅同步导入的数量（点播 / 直播），用于列表内展示同步结果 */
@@ -357,6 +359,7 @@ export const useAppStore = create<AppState>()(
       imageProxyMode: 'direct',
       imageProxyModeTouched: false,
       customImageProxy: '',
+      playbackRate: 1,
 
       addCustomApi: (api) => {
         const list = get().customAPIs;
@@ -883,6 +886,13 @@ export const useAppStore = create<AppState>()(
           state.hideUnavailableSources = true;
         }
 
+        if (
+          typeof (state as unknown as { playbackRate?: unknown }).playbackRate !== 'number' ||
+          (state as unknown as { playbackRate: number }).playbackRate <= 0
+        ) {
+          state.playbackRate = 1;
+        }
+
         // 迁移完成后清掉旧字段，避免内存里同时存在两套语义
         for (const stale of ['autoSkipIntro', 'autoSkipOpening', 'autoSkipMiddle', 'autoSkipOutro']) {
           delete (state as unknown as Record<string, unknown>)[stale];
@@ -936,6 +946,7 @@ export const useAppStore = create<AppState>()(
         imageProxyMode: s.imageProxyMode,
         imageProxyModeTouched: s.imageProxyModeTouched,
         customImageProxy: s.customImageProxy,
+        playbackRate: s.playbackRate,
       }),
       // 同步 storage 会在模块加载时立即 rehydrate（早于 React hydration），
       // 一旦首屏渲染依赖持久化状态就会与 SSR 输出不一致。

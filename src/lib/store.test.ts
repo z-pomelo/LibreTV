@@ -459,3 +459,13 @@ describe('hideUnavailableSources 偏好设置', () => {
     expect(store().hideUnavailableSources).toBe(true);
   });
 });
+
+describe('playbackRate 偏好设置', () => {
+  it('默认 1.0 并在 updateSettings 时可更新', () => {
+    expect(store().playbackRate).toBe(1);
+    store().updateSettings({ playbackRate: 1.5 });
+    expect(store().playbackRate).toBe(1.5);
+    store().updateSettings({ playbackRate: 1.25 });
+    expect(store().playbackRate).toBe(1.25);
+  });
+});
