@@ -128,6 +128,8 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
   const [classes, setClasses] = useState<NormalizedVodClass[]>(
     () => initialMem?.classes ?? []
   );
+  const [emptyPageEncountered, setEmptyPageEncountered] = useState(false);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
 
   const prevSourceKeyRef = useRef<string | undefined>(activeSourceKey);
 
@@ -141,6 +143,7 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
       setPage(1);
       setAccumulatedItems([]);
       setClasses([]);
+      setEmptyPageEncountered(false);
     }
     prevSourceKeyRef.current = activeSourceKey;
   }, [activeSourceKey]);
@@ -246,6 +249,7 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     }
     setPage(1);
     setAccumulatedItems([]);
+    setEmptyPageEncountered(false);
     setVodHomeMemory(null);
   };
 
@@ -255,6 +259,7 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     setSelectedSubId(newSubId);
     setPage(1);
     setAccumulatedItems([]);
+    setEmptyPageEncountered(false);
     setVodHomeMemory(null);
   };
 
@@ -316,6 +321,9 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     if (page === 1) {
       setAccumulatedItems((prev) => (prev.length > normalized.length ? prev : normalized));
     } else {
+      if (normalized.length === 0) {
+        setEmptyPageEncountered(true);
+      }
       setAccumulatedItems((prev) => {
         const existingIds = new Set(prev.map((i) => i.id));
         const nonDuplicate = normalized.filter((i) => !existingIds.has(i.id));
@@ -324,9 +332,27 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     }
   }, [query.data, page, yellowFilter]);
 
-  // 计算总页数
+  // 计算总页数与是否还有下一页
   const pageCount = query.data?.pageCount ?? 1;
-  const hasMore = page < pageCount;
+  const hasMore = page < pageCount && !emptyPageEncountered;
+
+  // 滚动触底自动加载下一页（对齐豆瓣推荐的无限滚动体验）
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || !hasMore || query.isFetching || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setPage((p) => p + 1);
+        }
+      },
+      { rootMargin: '600px 0px' }
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMore, query.isFetching, activeSourceKey, effectiveTypeId]);
 
   // 无源时展示友好空状态
   if (!activeSource || activeSources.length === 0) {
@@ -447,32 +473,42 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
         <p className="text-center text-sm text-faint py-8">该分类暂无推荐内容</p>
       ) : (
         <>
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
+          <div data-recommendation-grid className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
             {accumulatedItems.map((item) => (
               <VodItemCard key={item.id} item={item} onClick={() => handleItemPick(item)} />
             ))}
           </div>
 
-          {/* 加载更多 */}
-          {hasMore && (
-            <div className="flex justify-center mt-6">
+          {/* 触底加载与状态提示（与豆瓣推荐逻辑对齐） */}
+          <div ref={loadMoreRef} data-recommendation-more className="text-center text-sm text-muted py-6">
+            {query.isFetching ? (
+              <div role="status" className="flex items-center justify-center gap-2">
+                <Spinner size="sm" />
+                <span>正在加载更多推荐...</span>
+              </div>
+            ) : query.isError && page > 1 ? (
+              <div role="status">
+                <p>加载更多失败，已加载内容仍可浏览</p>
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm mt-2"
+                  onClick={() => void query.refetch()}
+                >
+                  重试加载更多
+                </button>
+              </div>
+            ) : hasMore ? (
               <button
                 type="button"
-                disabled={query.isFetching}
+                className="btn-ghost btn-sm"
                 onClick={() => setPage((p) => p + 1)}
-                className="btn-ghost px-5 py-2 text-xs sm:text-sm flex items-center gap-2 rounded-full border border-line hover:border-accent hover:text-accent transition-all disabled:opacity-60"
               >
-                {query.isFetching ? (
-                  <>
-                    <Spinner size="sm" />
-                    <span>正在加载...</span>
-                  </>
-                ) : (
-                  <span>加载更多</span>
-                )}
+                加载更多
               </button>
-            </div>
-          )}
+            ) : (
+              <p role="status">已显示全部 {accumulatedItems.length} 部推荐</p>
+            )}
+          </div>
         </>
       )}
     </section>
