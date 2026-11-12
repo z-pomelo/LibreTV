@@ -580,9 +580,12 @@ export function PlayerShell({
     // 换集时清掉上一集的预取窗口，避免带宽被旧集占用
     getVideoPrefetcher().stop();
     setError('');
-    setShowPoster(true);
+    // 平滑无缝过场（方案5）：换集时不立即抹黑海报，保留最后一帧并唤起加载动画，起播后平滑淡入
     const art = artRef.current;
     if (!art) return;
+    try {
+      if (art.loading) art.loading.show = true;
+    } catch {}
     applyTargetPlaybackRate(art.video);
     setupHls(art.video, targetUrl, true);
   };
@@ -779,6 +782,9 @@ export function PlayerShell({
       playbackStartedRef.current = true;
       applyTargetPlaybackRate(art.video);
       setShowPoster(false);
+      try {
+        if (art.loading) art.loading.show = false;
+      } catch {}
       // 延时解除换集保护：防止远程加载起播瞬间，底层音频/解码管道异步发出的 1.0 ratechange 溜入
       if (switchingGraceTimerRef.current) clearTimeout(switchingGraceTimerRef.current);
       switchingGraceTimerRef.current = setTimeout(() => {

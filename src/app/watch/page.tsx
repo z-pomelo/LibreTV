@@ -62,6 +62,25 @@ function WatchContent() {
   const titleParam = searchParams.get('title') || '';
   const indexParam = parseInt(searchParams.get('index') || '0', 10) || 0;
 
+  // 纯客户端状态切集（方案1）：消除 Next.js 路由跳转引发的服务端 RSC 网络往返
+  const [localIndex, setLocalIndex] = useState<number>(() => indexParam);
+
+  useEffect(() => {
+    setLocalIndex(indexParam);
+  }, [indexParam]);
+
+  // 监听浏览器前进/后退（popstate），保证浏览器后退能即时切换集数
+  useEffect(() => {
+    const handlePopState = () => {
+      if (typeof window === 'undefined') return;
+      const sp = new URLSearchParams(window.location.search);
+      const idx = parseInt(sp.get('index') || '0', 10) || 0;
+      setLocalIndex(idx);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   const [reversed, setReversed] = useState(false);
   const [switchOpen, setSwitchOpen] = useState(false);
   const [skipPanelOpen, setSkipPanelOpen] = useState(false);
@@ -118,16 +137,16 @@ function WatchContent() {
   // 当前播放地址：优先取剧集列表中的当前集，其次直连 URL 参数
   const currentUrl = useMemo(() => {
     if (episodes.length > 0) {
-      const idx = Math.min(Math.max(indexParam, 0), episodes.length - 1);
+      const idx = Math.min(Math.max(localIndex, 0), episodes.length - 1);
       return episodes[idx] || directUrl;
     }
     return directUrl;
-  }, [episodes, indexParam, directUrl]);
+  }, [episodes, localIndex, directUrl]);
 
   const currentIndex = useMemo(() => {
-    if (episodes.length > 0) return Math.min(Math.max(indexParam, 0), episodes.length - 1);
-    return indexParam;
-  }, [episodes, indexParam]);
+    if (episodes.length > 0) return Math.min(Math.max(localIndex, 0), episodes.length - 1);
+    return localIndex;
+  }, [episodes, localIndex]);
 
   // 跳过片段按剧名记忆：换集不变，换源到同名资源也能命中。
   // 标题缺失（直连链接）时退回 source:vodId，至少保证本源本片可用。
@@ -146,23 +165,30 @@ function WatchContent() {
 
   const goEpisode = useCallback(
     (index: number) => {
-      const sp = new URLSearchParams(searchParams.toString());
-      sp.set('index', String(index));
-      sp.set('url', episodes[index] || directUrl);
-      sp.delete('position');
-      router.replace(`/watch?${sp.toString()}`, { scroll: false });
+      setLocalIndex(index);
+      if (typeof window !== 'undefined') {
+        const sp = new URLSearchParams(window.location.search);
+        sp.set('index', String(index));
+        const nextUrl = episodes[index] || directUrl;
+        if (nextUrl) sp.set('url', nextUrl);
+        sp.delete('position');
+        window.history.replaceState(null, '', `/watch?${sp.toString()}`);
+      }
     },
-    [router, searchParams, episodes, directUrl]
+    [episodes, directUrl]
   );
 
   // 进度恢复优先级：URL position 参数 > IndexedDB 记录
   const getRestorePosition = useCallback(async () => {
-    const urlPos = parseInt(searchParams.get('position') || '0', 10) || 0;
-    if (urlPos > 0) return urlPos;
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location.search);
+      const urlPos = parseInt(sp.get('position') || '0', 10) || 0;
+      if (urlPos > 0) return urlPos;
+    }
     if (!vodId) return 0;
     const entry = await db.progress.get(progressKeyOf(sourceKey, vodId, currentIndex));
     return entry?.position ?? 0;
-  }, [searchParams, sourceKey, vodId, currentIndex]);
+  }, [sourceKey, vodId, currentIndex]);
 
   // 写入观看历史（进入页面即记录，进度后续增量更新）
   useEffect(() => {
