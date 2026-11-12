@@ -6,7 +6,7 @@ import type { QualityEntry, SourceConfig, LiveSourceConfig, SourceSearchOutcome 
 import { migrateSkipMarks, type SkipMark, type SkipSegment } from './skip-marks';
 import { isQualityEntryFresh, mergeQualityEntries, qualityKey } from './quality';
 import { clearLiveProbeResultsDb, loadLiveProbeResults, saveLiveProbeResults } from './db';
-import { PERSIST_KEY, createThrottledStorage } from './persist-storage';
+import { PERSIST_KEY, createThrottledStorage, subscribePersistChanges } from './persist-storage';
 
 /**
  * 全局设置（zustand + localStorage 持久化）。
@@ -28,6 +28,18 @@ export interface AppSettings {
   /** 用户是否在设置中主动选择过推荐数据源；为 false 时部署者的 DEFAULT_RECOMMEND_SOURCE 默认值可生效 */
   recommendSourceTouched: boolean;
   autoplayNext: boolean;
+  /**
+   * 音量放大（Web Audio 增益链，约 1.8 倍）：默认关闭。
+   * 增益与 video.volume 相乘，对所有音量档位生效，会整体抬高响度，
+   * 因此只作为用户显式开启的兜底，不作为出厂默认。
+   */
+  volumeBoost: boolean;
+  /**
+   * 底部细进度条：默认开启（保持既有观感，不替用户改行为）。
+   * 开启时控制栏收起后画面底边常驻一条 3px 进度线；关闭后收起即完全隐藏。
+   * 类名判定与同步见 lib/mini-progress-bar.ts。
+   */
+  miniProgressBar: boolean;
   /** 跳过片段：按归一化剧名持久化，详见 lib/skip-marks.ts */
   skipMarks: Record<string, SkipMark>;
   /**
@@ -70,6 +82,14 @@ export interface SourceSubscription {
    * 不改动各源自身的勾选状态、也不删除已导入的数据，因此随时可无损恢复。
    */
   enabled?: boolean;
+  /**
+   * 自动刷新周期（天）。undefined = 只手动同步（默认，与历史行为一致）；
+   * 1-365 表示打开站点时按该周期静默刷新（详见 lib/subscription-sync.ts）。
+   * 预置订阅（DEFAULT_SUBSCRIPTIONS）也读这里：用户显式设过就覆盖部署者的默认值。
+   */
+  refreshDays?: number;
+  /** 连续同步失败次数：达到阈值后暂停自动刷新，成功一次清零 */
+  failStreak?: number;
 }
 
 /** 删除点播源后的撤销快照 */
@@ -231,9 +251,15 @@ interface AppState extends AppSettings {
   removeSubscription: (url: string) => void;
   /** 整体启用/停用某个订阅（停用只影响搜索时是否采用，不动各源的勾选状态） */
   setSubscriptionEnabled: (url: string, enabled: boolean) => void;
+  /** 设置自动刷新周期；传 undefined 表示改为纯手动同步 */
+  setSubscriptionRefreshDays: (url: string, days: number | undefined) => void;
   markSubscriptionSynced: (url: string, name?: string, counts?: SubscriptionSyncCounts) => void;
-  /** 记录一次同步失败（保留该订阅与已导入的源，仅更新状态供列表展示） */
-  markSubscriptionFailed: (url: string, error: string) => void;
+  /**
+   * 记录一次同步失败（保留该订阅与已导入的源，仅更新状态供列表展示）。
+   * `countFailure: false` 用于鉴权失败（401/503）——那是会话问题不是源的问题，
+   * 计入连续失败会让自动刷新被误暂停。
+   */
+  markSubscriptionFailed: (url: string, error: string, options?: { countFailure?: boolean }) => void;
   /** 用订阅内容整体替换该订阅名下的点播源，返回新增数量 */
   applySubscriptionSources: (subUrl: string, list: Omit<SourceConfig, 'key'>[]) => number;
   /** 用订阅内容整体替换该订阅名下的直播源，返回新增数量 */
@@ -322,6 +348,8 @@ function getInitialRecommendSource(): 'douban' | 'bangumi' | 'hot-list' | 'vod' 
  * 需要在直接写盘前 flush 缓冲，而运行时依赖方向是 store → db，不能反向引用）。
  */
 
+const persistStorage = createThrottledStorage();
+
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -350,6 +378,10 @@ export const useAppStore = create<AppState>()(
       selectedRecommendVodKey: undefined,
       setSelectedRecommendVodKey: (key) => set({ selectedRecommendVodKey: key }),
       autoplayNext: true,
+      // 音量放大默认关闭：开启后对所有音量档位整体抬高约 1.8 倍，交给用户显式选择
+      volumeBoost: false,
+      // 细进度条默认开启：这是多年既有行为，新增的只是「可以关掉」的入口
+      miniProgressBar: true,
       skipMarks: {},
       // 自动跳过默认开启，但只有用户真正标记过片段才生效
       autoSkipSegments: true,
@@ -472,6 +504,8 @@ export const useAppStore = create<AppState>()(
                   lastStatus: 'ok',
                   lastError: undefined,
                   lastCounts: counts ?? s.lastCounts,
+                  // 成功即清零：自动刷新被暂停的订阅会随之恢复
+                  failStreak: 0,
                 }
               : s
           ),
@@ -484,11 +518,27 @@ export const useAppStore = create<AppState>()(
         });
       },
 
-      markSubscriptionFailed: (url, error) => {
-        // 失败不清空已导入的源（旧数据保留），仅记录状态供列表展示
+      setSubscriptionRefreshDays: (url, days) => {
         set({
           subscriptions: get().subscriptions.map((s) =>
-            s.url === url ? { ...s, lastStatus: 'error', lastError: error } : s
+            s.url === url ? { ...s, refreshDays: days } : s
+          ),
+        });
+      },
+
+      markSubscriptionFailed: (url, error, options) => {
+        // 失败不清空已导入的源（旧数据保留），仅记录状态供列表展示
+        const countFailure = options?.countFailure !== false;
+        set({
+          subscriptions: get().subscriptions.map((s) =>
+            s.url === url
+              ? {
+                  ...s,
+                  lastStatus: 'error',
+                  lastError: error,
+                  failStreak: countFailure ? (s.failStreak ?? 0) + 1 : s.failStreak,
+                }
+              : s
           ),
         });
       },
@@ -841,7 +891,7 @@ export const useAppStore = create<AppState>()(
     {
       name: PERSIST_KEY,
       // 节流写入：搜索 / 测活等高频 set 不再每次都整份序列化写盘
-      storage: createJSONStorage(createThrottledStorage),
+      storage: createJSONStorage(() => persistStorage),
       // v1：直播源新增归属字段、最近观看新增 sourceUrl。
       // v2：直播源归属改为多引用（fromSubscription 单值 → fromSubscriptions 数组）。
       // v3：新增片头片尾标记与自动跳过开关（旧快照缺字段时补默认值）。
@@ -849,8 +899,10 @@ export const useAppStore = create<AppState>()(
       // v5：标记新增本剧总开关 enabled。
       // v6：自动跳过由「片头 / 中段」合并为单一开关。
       // v7：片尾结束也并入同一开关（不再单独提供 autoSkipOutro）。
+      // v8：订阅新增 refreshDays / failStreak——两者都缺省即「纯手动 + 无失败记录」，
+      //     与旧行为完全一致，因此无需改写存量数据，仅借版本号让 migrate 跑一遍。
       // 此前未声明 version 的存量数据会被视为 v0 并走 migrate 补齐。
-      version: 7,
+      version: 8,
       migrate: (persisted, version) => {
         const state = { ...((persisted ?? {}) as Partial<AppState>) };
         if (!Array.isArray(state.liveRecent)) state.liveRecent = [];
@@ -941,6 +993,8 @@ export const useAppStore = create<AppState>()(
         recommendSourceTouched: s.recommendSourceTouched,
         selectedRecommendVodKey: s.selectedRecommendVodKey,
         autoplayNext: s.autoplayNext,
+        volumeBoost: s.volumeBoost,
+        miniProgressBar: s.miniProgressBar,
         skipMarks: s.skipMarks,
         autoSkipSegments: s.autoSkipSegments,
         imageProxyMode: s.imageProxyMode,
@@ -955,6 +1009,19 @@ export const useAppStore = create<AppState>()(
     }
   )
 );
+
+const syncPersistSnapshot = (state: AppState) => {
+  const { partialize, version } = useAppStore.persist.getOptions();
+  if (partialize) persistStorage.syncSnapshot(partialize(state) as Record<string, unknown>, version);
+};
+syncPersistSnapshot(useAppStore.getState());
+useAppStore.persist.onFinishHydration(syncPersistSnapshot);
+
+// rehydrate 直接替换内存中的持久化字段，不会触发 persist 的 setItem。
+// 首次恢复仍由 Providers 在挂载后执行，避免 SSR hydration 不一致。
+subscribePersistChanges(() => {
+  if (useAppStore.persist.hasHydrated()) void useAppStore.persist.rehydrate();
+});
 
 /**
  * 从 IndexedDB 恢复测活缓存（Providers 挂载后、persist.rehydrate 之后调用）。
@@ -1015,11 +1082,6 @@ export function isSourceDisabled(
 }
 
 /**
- * 源是否来自一个被用户整体停用的订阅。
- * 与 isSourceDisabled 分开判断：一个是用户主动关的、一个是系统按连续失败关的，
- * 提示文案与恢复方式都不同，混在一起用户就看不懂源为什么不生效了。
- */
-/**
  * 读取某「源 + 影片」的画质记录（直接查内存态，不订阅 store）。
  * 结果列表一次可能有十几张卡片 × 十几个来源，订阅整个 map 会让每次探测
  * 结果都触发所有卡片重渲染，因此只在展开面板 / 探测回调时用 getState 读。
@@ -1043,6 +1105,11 @@ export function readQualities(pairs: Array<{ sourceKey: string; vodId: string }>
   return out;
 }
 
+/**
+ * 源是否来自一个被用户整体停用的订阅。
+ * 与 isSourceDisabled 分开判断：一个是用户主动关的、一个是系统按连续失败关的，
+ * 提示文案与恢复方式都不同，混在一起用户就看不懂源为什么不生效了。
+ */
 export function isInDisabledSubscription(
   state: Pick<AppState, 'subscriptions'>,
   key: string

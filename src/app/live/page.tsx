@@ -47,6 +47,7 @@ function LiveContent() {
   const liveSubscriptions = useAppStore((s) => s.liveSubscriptions);
   const liveFavorites = useAppStore((s) => s.liveFavorites);
   const imageProxyMode = useAppStore((s) => s.imageProxyMode);
+  const volumeBoost = useAppStore((s) => s.volumeBoost);
   const customImageProxy = useAppStore((s) => s.customImageProxy);
   const { verified } = useAuth();
   const [copied, setCopied] = useState(false);
@@ -231,6 +232,7 @@ function LiveContent() {
                   title={currentChannel?.name || '直播'}
                   onPrevChannel={goPrevChannel}
                   onNextChannel={goNextChannel}
+                  volumeBoost={volumeBoost}
                 />
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-black">
@@ -270,10 +272,16 @@ function LiveContent() {
                     <span className="live-dot shrink-0" />
                     <h1 className="text-sm font-semibold text-content truncate">{currentChannel.name}</h1>
                     {currentChannel.group && (
-                      <span className="tag bg-chip text-faint shrink-0">{currentChannel.group}</span>
+                      <span className="tag bg-chip text-faint shrink-0 hidden sm:inline-flex">
+                        {currentChannel.group}
+                      </span>
                     )}
                   </div>
-                  <p className="text-xs text-faint truncate mt-0.5">{currentChannel.url}</p>
+                  {/* 手机上不展示完整流地址：占宽且无信息价值，横屏/桌面再显示 */}
+                  <p className="text-xs text-faint truncate mt-0.5 hidden sm:block">{currentChannel.url}</p>
+                  {currentChannel.group && (
+                    <p className="text-xs text-faint truncate mt-0.5 sm:hidden">{currentChannel.group}</p>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button

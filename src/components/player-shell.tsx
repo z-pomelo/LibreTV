@@ -10,6 +10,8 @@ import {
   getVideoPrefetcher,
   getNextEpisodePrefetcher,
 } from '@/lib/video-prefetcher';
+import { attachVolumeBoost, type VolumeBoostHandle } from '@/lib/volume-boost';
+import { CONTROL_SHOW_CLASS, syncMiniProgressBar } from '@/lib/mini-progress-bar';
 import { loadCacheSettings } from '@/lib/video-cache';
 import { formatTime } from '@/lib/utils';
 import { prefersTouchPointer } from '@/lib/touch-pointer';
@@ -67,6 +69,16 @@ interface PlayerShellProps {
    * 是否连播下一集仍由 autoplayNext 决定。
    */
   autoSkipSegments: boolean;
+  /**
+   * 音量放大（Web Audio 增益链）：默认 false。
+   * 关闭时完全不接入音频链路；播放中改开关由 setBoost 走「直通/增益」切换。
+   */
+  volumeBoost: boolean;
+  /**
+   * 底部细进度条（默认 true）：控制栏收起后是否在画面底边常驻一条 3px 进度线。
+   * 关闭后收起即完全隐藏。类名同步见 lib/mini-progress-bar.ts。
+   */
+  miniProgressBar?: boolean;
   /** 中段两步态的起点：由页面层持有，面板与快捷键共用同一份状态 */
   pendingStart: number | null;
   /** 更新中段起点；null 表示取消或已消费 */
@@ -107,6 +119,8 @@ export function PlayerShell({
   autoplayNext,
   skipMark,
   autoSkipSegments,
+  volumeBoost,
+  miniProgressBar = true,
   pendingStart,
   onPendingStart,
   onPlayerApi,
@@ -129,6 +143,7 @@ export function PlayerShell({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const artRef = useRef<any>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const volumeBoostRef = useRef<VolumeBoostHandle | null>(null);
   const [error, setError] = useState('');
   const [hint, setHint] = useState('');
   // 起播前的品牌占位图（沿用旧版 nomedia 素材），实际开始播放后隐藏
@@ -138,14 +153,14 @@ export function PlayerShell({
 
   // 始终持有最新 props/回调，避免重建播放器
   const propsRef = useRef({
-    url, title, adFilter, autoplayNext, skipMark, autoSkipSegments,
+    url, title, adFilter, autoplayNext, skipMark, autoSkipSegments, volumeBoost, miniProgressBar,
     pendingStart, onPendingStart, onPlayerApi, onRecordSegment,
     episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onQuality, onRequestSwitchSource,
     onPrevEpisode, onNextEpisode, hasPrevEpisode, hasNextEpisode,
   });
   propsRef.current = {
-    url, title, adFilter, autoplayNext, skipMark, autoSkipSegments,
+    url, title, adFilter, autoplayNext, skipMark, autoSkipSegments, volumeBoost, miniProgressBar,
     pendingStart, onPendingStart, onPlayerApi, onRecordSegment,
     episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onQuality, onRequestSwitchSource,
@@ -609,6 +624,11 @@ export function PlayerShell({
       aspectRatio: true,
       fullscreen: true,
       fullscreenWeb: true,
+      // 恒传 true，不跟设置项走：库的 miniProgressBar 插件只在构造时注册、运行时不可换，
+      // 而它正是「控制栏显示时摘掉 art-mini-progress-bar」的唯一维护者。设置项只负责
+      // 「关掉时不保留类名」（见下方 control 监听 + 开关变化的 useEffect）。
+      // 若这里按设置传 false，播放中把开关拨回「开」就没人再管这个类名，只能手动挂类，
+      // 而挂上去就会常驻——同组 CSS 会连带关掉底部渐变遮罩与进度圆点（实测过）。
       miniProgressBar: true,
       mutex: true,
       backdrop: true,
@@ -650,6 +670,26 @@ export function PlayerShell({
     });
     artRef.current = art;
 
+    // 音量放大：起播后（src 已就绪）才挂 Web Audio 增益图，避免空 src / CORS 误判。
+    // 默认关闭（设置项 volumeBoost）：不接入时完全不碰音频链路。
+    // 纯附加：不改动 ArtPlayer 的 volume/滑块/快捷键；失败时原样播放。
+    art.on('video:playing', () => {
+      if (!propsRef.current.volumeBoost) return;
+      if (!volumeBoostRef.current) {
+        volumeBoostRef.current = attachVolumeBoost(art.video);
+      }
+    });
+
+    // 底部细进度条：库插件先按 control 事件挂/摘类，我们紧随其后把类名收敛到
+    // 「设置开启 且 控制栏已收起」这一个目标态。本监听注册在构造之后，同一次事件里
+    // 跑在插件处理器后面，所以关闭态下刚挂上的类会立刻被摘掉，收起后什么都不留。
+    art.on('control', (show: boolean) => {
+      syncMiniProgressBar(art.template?.$player?.classList, {
+        enabled: propsRef.current.miniProgressBar,
+        controlsShown: show,
+      });
+    });
+
     // 进度条区间可视化：初始渲染一次，换集 duration 变化时重绘
     renderSkipMarks();
     art.on('video:durationchange', renderSkipMarks);
@@ -657,6 +697,26 @@ export function PlayerShell({
     art.on('fullscreen', renderSkipMarks);
     art.on('fullscreenWeb', renderSkipMarks);
     art.on('resize', renderSkipMarks);
+
+    /**
+     * 倍速跨集保持（issue #955）。
+     *
+     * 换源会让媒体元素重新走一遍 load 算法，而该算法只动一个播放属性：
+     * `playbackRate = defaultPlaybackRate`。所以只要让 defaultPlaybackRate 始终
+     * 等于用户选的倍速，这次「归位」就变成空操作——而且一次覆盖全部重载路径：
+     * 换集、直连失败转代理、video:error 重建，以及 hls.js 内部
+     * recoverMediaError 的 detach/attach（那条路径不经过 setupHls，只在
+     * loadEpisode 里补写 playbackRate 是够不着的）。
+     *
+     * 判断依据：归位时新值必然等于 defaultPlaybackRate，跳过即可。必须跳过——
+     * 归位确实会派发 ratechange，无差别同步会把默认值自己写成 1，机制当场失效。
+     */
+    art.on('video:ratechange', () => {
+      const video = art.video;
+      if (video && video.playbackRate !== video.defaultPlaybackRate) {
+        video.defaultPlaybackRate = video.playbackRate;
+      }
+    });
 
     // 播放页「记录当前」需要精确时间：不能依赖 5s 节流的 onTimeUpdate
     propsRef.current.onPlayerApi?.({
@@ -1028,6 +1088,8 @@ export function PlayerShell({
       document.removeEventListener('visibilitychange', saveOnHide);
       if (longPressTimer) clearTimeout(longPressTimer);
       if (switchingGraceTimerRef.current) clearTimeout(switchingGraceTimerRef.current);
+      volumeBoostRef.current?.dispose();
+      volumeBoostRef.current = null;
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
       el?.removeEventListener('touchstart', onTouchStart);
@@ -1053,6 +1115,34 @@ export function PlayerShell({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // —— 音量放大开关：播放中改设置即时生效，不必等重新起播 ——
+  // 关闭走「单位增益直通」而不是拆链：createMediaElementSource 之后元素输出只走
+  // 音频图，拆链会永久静音且无法恢复直连，所以只旁路增益与限幅。
+  useEffect(() => {
+    const video = artRef.current?.video as HTMLVideoElement | undefined;
+    if (!video) return;
+    if (volumeBoost) {
+      volumeBoostRef.current = attachVolumeBoost(video) ?? volumeBoostRef.current;
+      volumeBoostRef.current?.setBoost(true);
+    } else {
+      volumeBoostRef.current?.setBoost(false);
+    }
+  }, [volumeBoost]);
+
+  // —— 底部细进度条开关：播放中改设置即时生效，不用重开视频 ——
+  // 按「当前可见状态 + 设置」收敛，而不是无条件挂类：控制栏可见时挂着类名虽然不会让
+  // 控制栏跳位（库样式里 art-control-show 的规则排在后面），但同组的
+  // background-image:none 与 .art-progress-indicator{display:none!important} 会无条件
+  // 生效——底部渐变遮罩和进度圆点就这么没了。所以任何时候都不留常驻类名。
+  useEffect(() => {
+    const player = artRef.current?.template?.$player;
+    if (!player) return;
+    syncMiniProgressBar(player.classList, {
+      enabled: miniProgressBar,
+      controlsShown: player.classList.contains(CONTROL_SHOW_CLASS),
+    });
+  }, [miniProgressBar]);
 
   // —— 上/下集禁用态：走 ArtPlayer 的 controls API 更新样式，不直接改 DOM ——
   // 直接 querySelector 改 style 在控件重建（切全屏/播放器重绘）后不会恢复，且依赖内部 class 名。
