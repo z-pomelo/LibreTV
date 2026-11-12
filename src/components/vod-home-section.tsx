@@ -129,7 +129,7 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
     () => initialMem?.classes ?? []
   );
   const [emptyPageEncountered, setEmptyPageEncountered] = useState(false);
-  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const [loadMoreEl, setLoadMoreEl] = useState<HTMLDivElement | null>(null);
 
   const prevSourceKeyRef = useRef<string | undefined>(activeSourceKey);
 
@@ -338,8 +338,7 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
 
   // 滚动触底自动加载下一页（对齐豆瓣推荐的无限滚动体验）
   useEffect(() => {
-    const target = loadMoreRef.current;
-    if (!target || !hasMore || query.isFetching || typeof IntersectionObserver === 'undefined') return;
+    if (!loadMoreEl || !hasMore || query.isFetching || typeof IntersectionObserver === 'undefined') return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -350,9 +349,9 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
       { rootMargin: '600px 0px' }
     );
 
-    observer.observe(target);
+    observer.observe(loadMoreEl);
     return () => observer.disconnect();
-  }, [hasMore, query.isFetching, activeSourceKey, effectiveTypeId]);
+  }, [loadMoreEl, hasMore, query.isFetching]);
 
   // 无源时展示友好空状态
   if (!activeSource || activeSources.length === 0) {
@@ -480,7 +479,7 @@ export function VodHomeView({ onPick }: { onPick: (title: string) => void }) {
           </div>
 
           {/* 触底加载与状态提示（与豆瓣推荐逻辑对齐） */}
-          <div ref={loadMoreRef} data-recommendation-more className="text-center text-sm text-muted py-6">
+          <div ref={setLoadMoreEl} data-recommendation-more className="text-center text-sm text-muted py-6">
             {query.isFetching ? (
               <div role="status" className="flex items-center justify-center gap-2">
                 <Spinner size="sm" />
